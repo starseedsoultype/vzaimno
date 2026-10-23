@@ -102,6 +102,8 @@ const FIELDS = {
   tg:      { name: "ТГ-группа",      task: "Подпишитесь на группу", hint: "https://t.me/..." },
   vk:      { name: "ВК",             task: "Подпишитесь на страницу", hint: "https://vk.com/..." },
   boosty:  { name: "Бусти",          task: "Подпишитесь на Бусти", hint: "https://boosty.to/..." },
+  tiktok:  { name: "TikTok",         task: "Подпишитесь на TikTok", hint: "https://www.tiktok.com/@..." },
+  insta:   { name: "Instagram",      task: "Подпишитесь на Instagram", hint: "https://www.instagram.com/..." },
 };
 const PATTERN = {
   book: /^https:\/\/(www\.)?litres\.ru\/(book\/\S+|\d+\/?)$/,
@@ -109,6 +111,8 @@ const PATTERN = {
   tg: /^https:\/\/t\.me\/[\w+]+\/?$/,
   vk: /^https:\/\/(m\.)?vk\.(com|ru)\/[\w.]+\/?$/,
   boosty: /^https:\/\/(www\.)?boosty\.to\/[\w.-]+\/?(\?\S*)?$/,
+  tiktok: /^https:\/\/(www\.)?tiktok\.com\/@[\w.]+\/?(\?\S*)?$/,
+  insta: /^https:\/\/(www\.)?instagram\.com\/[\w.]+\/?(\?\S*)?$/,
 };
 
 const state = { tab: "feed", me: null, field: null, card: null, upload: null };
@@ -142,7 +146,7 @@ function cardHtml(c, task) {
     <div class="rating">${badge(c.rating)}</div>
     <div class="task">${esc(task ?? FIELDS[c.field].task)}</div>
     <button class="link" data-open="${esc(c.url)}">${esc(c.url)}</button>
-    <div class="safe">🔒 Ссылки проверены: только litres.ru, t.me, vk.com, boosty.to</div>`;
+    <div class="safe">🔒 Ссылки проверены: только litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com</div>`;
 }
 
 // ---------- Лента ----------
@@ -210,7 +214,7 @@ function renderProfile() {
     </form>
     <div class="row"><button class="btn ghost" data-act="invite">Пригласить автора</button></div>
     <div class="bonus">За каждого приглашённого, кто сделает первый обмен, ваша карточка сутки показывается всем наверху</div>
-    <div class="safe" style="text-align:center">Все поля по желанию. Принимаются только ссылки litres.ru, t.me, vk.com, boosty.to.</div>`;
+    <div class="safe" style="text-align:center">Все поля по желанию. Принимаются только ссылки litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com.</div>`;
   document.getElementById("pf").onsubmit = async (e) => {
     e.preventDefault();
     const data = {}; let ok = true;
@@ -319,7 +323,7 @@ document.addEventListener("click", async (e) => {
 
 // Текст правил: Content Creator, проверка Brand Guardian.
 const RULES = `<b>Профиль</b>
-<p>В профиле 5 полей, все по желанию: книга и профиль автора на ЛитРес, группа в Телеграме, ВК, Бусти. Принимаются только ссылки с litres.ru, t.me, vk.com, vk.ru и boosty.to, поэтому в карточках нет скама.</p>
+<p>В профиле 7 полей, все по желанию: книга и профиль автора на ЛитРес, группа в Телеграме, ВК, Бусти, TikTok, Instagram. Принимаются только ссылки с litres.ru, t.me, vk.com, vk.ru, boosty.to, tiktok.com и instagram.com, поэтому в карточках нет скама.</p>
 <b>Обмен по полям</b>
 <p>Книга на книгу, профиль на профиль, группа на группу. В ленте вы видите авторов, у которых заполнено то же поле.</p>
 <b>Как обменяться</b>

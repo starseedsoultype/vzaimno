@@ -10,7 +10,7 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
 const BUCKET = "vz-shots";
 const H = 3600_000;
 
-const FIELDS = ["book", "profile", "tg", "vk", "boosty"] as const;
+const FIELDS = ["book", "profile", "tg", "vk", "boosty", "tiktok", "insta"] as const;
 type Field = typeof FIELDS[number];
 const LABEL: Record<Field, string> = {
   book: "оценка книге на ЛитРес",
@@ -18,6 +18,8 @@ const LABEL: Record<Field, string> = {
   tg: "подписка на ТГ-группу",
   vk: "подписка на ВК",
   boosty: "подписка на Бусти",
+  tiktok: "подписка на TikTok",
+  insta: "подписка на Instagram",
 };
 // Только эти адреса, чтобы в карточках не было скама.
 const PATTERN: Record<Field, RegExp> = {
@@ -26,6 +28,8 @@ const PATTERN: Record<Field, RegExp> = {
   tg: /^https:\/\/t\.me\/[\w+]+\/?$/,
   vk: /^https:\/\/(m\.)?vk\.(com|ru)\/[\w.]+\/?$/,
   boosty: /^https:\/\/(www\.)?boosty\.to\/[\w.-]+\/?(\?\S*)?$/,
+  tiktok: /^https:\/\/(www\.)?tiktok\.com\/@[\w.]+\/?(\?\S*)?$/,
+  insta: /^https:\/\/(www\.)?instagram\.com\/[\w.]+\/?(\?\S*)?$/,
 };
 
 const CORS = {

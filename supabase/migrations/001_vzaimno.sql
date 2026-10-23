@@ -170,3 +170,10 @@ revoke execute on function public.vz_report_hide() from public, anon, authentica
 drop trigger if exists vz_report_hide on public.vz_reports;
 create trigger vz_report_hide after insert on public.vz_reports
 for each row execute function public.vz_report_hide();
+
+-- TikTok и Instagram.
+alter table public.vz_users add column if not exists tiktok text;
+alter table public.vz_users add column if not exists insta text;
+alter table public.vz_tasks drop constraint if exists vz_tasks_field_check;
+alter table public.vz_tasks add constraint vz_tasks_field_check
+  check (field in ('book', 'profile', 'tg', 'vk', 'boosty', 'tiktok', 'insta'));
