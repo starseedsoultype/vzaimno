@@ -9,6 +9,16 @@ const API = `https://api.telegram.org/bot${TOKEN}`;
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const BUCKET = "vz-shots";
 const H = 3600_000;
+const DESCRIPTION = `Взаимно помогает авторам и блогерам обмениваться оценками книг и подписками без ручного поиска в чате.
+
+Обмен доступен для книг и профилей ЛитРес, групп в Telegram, ВК, Бусти, TikTok и Instagram.
+
+Карточки авторов собраны в ленте, и ничего не тонет. Каждый обмен подтверждается скрином, второй автор отвечает тем же. Рейтинг взаимности виден всем.
+
+Ссылки проверяются: принимаются только адреса этих площадок, это защищает от мошенничества.
+
+Открывается прямо в Telegram, ничего устанавливать не нужно 📚`;
+const ABOUT = "Обмен оценками и подписками для авторов и блогеров. Карточки в ленте, подтверждение скрином, рейтинг взаимности.";
 
 const FIELDS = ["book", "profile", "tg", "vk", "boosty", "tiktok", "insta"] as const;
 type Field = typeof FIELDS[number];
@@ -289,7 +299,10 @@ Deno.serve(async (req) => {
       url: `https://${url.host}/functions/v1/vzaimno`, secret_token: await SECRET, allowed_updates: ["message"],
     });
     await tg("setChatMenuButton", { menu_button: { type: "web_app", text: "Взаимно", web_app: { url: WEBAPP_URL } } });
-    return json(hook);
+    // Тексты до нажатия Start: написал Content Creator, проверил Brand Guardian, утвердила Олеся.
+    const desc = await tg("setMyDescription", { description: DESCRIPTION });
+    const about = await tg("setMyShortDescription", { short_description: ABOUT });
+    return json({ hook, desc, about });
   }
   if (req.headers.get("x-telegram-bot-api-secret-token") === await SECRET) {
     await onBotUpdate(await req.json()).catch(console.error);
