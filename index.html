@@ -141,7 +141,8 @@ async function renderFeed() {
       <button class="btn ghost" data-act="skip">Дальше</button>
       <button class="btn" data-act="shot">📎 Прикрепить скрин</button>
     </div>
-    <div class="paste">С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь</div>`;
+    <div class="paste">С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь</div>
+    <div class="row"><button class="btn ghost" data-act="chat">Уже обменялись в чате</button></div>`;
   state.upload = { field: card.field, to_id: card.tg_id, reply: false };
 }
 
@@ -255,6 +256,11 @@ document.addEventListener("click", async (e) => {
     t.dataset.open.startsWith("https://t.me/") ? tg.openTelegramLink(t.dataset.open) : tg.openLink(t.dataset.open);
   } else if (t.dataset.act === "skip") {
     await api("skip", { field: state.card.field, to_id: state.card.tg_id }); renderFeed();
+  } else if (t.dataset.act === "chat") {
+    tg.showConfirm("Скрыть эту карточку навсегда? Без скрина и уведомлений.", async (yes) => {
+      if (!yes) return;
+      await api("skip", { field: state.card.field, to_id: state.card.tg_id, done: true }); renderFeed();
+    });
   } else if (t.dataset.act === "ava") {
     document.getElementById("ava").click();
   } else if (t.dataset.act === "shot") {

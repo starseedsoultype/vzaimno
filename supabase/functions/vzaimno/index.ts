@@ -129,7 +129,7 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
 
   async skip(me, b) {
     await db.from("vz_skips").upsert({
-      user_id: me.tg_id, target_id: b.to_id, field: b.field, skipped_at: new Date().toISOString(),
+      user_id: me.tg_id, target_id: b.to_id, field: b.field, skipped_at: new Date().toISOString(), done: !!b.done,
     });
     return { ok: true };
   },

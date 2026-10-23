@@ -37,6 +37,7 @@ create table if not exists public.vz_skips (
   target_id  bigint not null,
   field      text not null,
   skipped_at timestamptz not null default now(),
+  done       boolean not null default false,
   primary key (user_id, target_id, field)
 );
 
@@ -72,6 +73,8 @@ language sql stable as $$
   join stats s on s.tg_id = u.tg_id
   left join public.vz_skips k on k.user_id = me and k.target_id = u.tg_id and k.field = f
   where u.tg_id <> me
+    -- отмечено вручную: «уже обменялись в чате»
+    and not coalesce(k.done, false)
     and to_jsonb(u) ->> f is not null
     and public.vz_unanswered(u.tg_id) < 10
     -- отработанная карточка больше не показывается (в любом статусе; повтор скрина идёт через «Входящие»)
