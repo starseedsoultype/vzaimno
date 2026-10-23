@@ -91,13 +91,22 @@ function decodeImage(dataUrl: string) {
 }
 
 async function card(u: any, field: Field) {
-  return { tg_id: u.tg_id, name: u.name ?? "Автор", photo: u.photo_url, url: u[field], field, rating: await rating(u.tg_id) };
+  return { tg_id: u.tg_id, name: u.name ?? "Автор", photo: u.photo_custom ?? u.photo_url, url: u[field], field, rating: await rating(u.tg_id) };
 }
 
 const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
   async me(me) {
     const { data: unanswered } = await db.rpc("vz_unanswered", { uid: me.tg_id });
     return { user: me, rating: await rating(me.tg_id), unanswered };
+  },
+
+  async avatar(me, b) {
+    const bytes = decodeImage(String(b.image));
+    const path = `${me.tg_id}-${Date.now()}.jpg`;
+    await db.storage.from("vz-ava").upload(path, bytes, { contentType: "image/jpeg" });
+    const url = db.storage.from("vz-ava").getPublicUrl(path).data.publicUrl;
+    await db.from("vz_users").update({ photo_custom: url }).eq("tg_id", me.tg_id);
+    return { url };
   },
 
   async save(me, b) {

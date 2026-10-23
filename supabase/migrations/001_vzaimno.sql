@@ -109,3 +109,7 @@ create extension if not exists pg_cron;
 create extension if not exists pg_net;
 select cron.schedule('vzaimno-hourly', '0 * * * *',
   $$select net.http_post(url := 'https://ogqtywdsplyqwfznqxnu.supabase.co/functions/v1/vzaimno?cron=1', body := '{}'::jsonb)$$);
+
+-- Своё фото профиля (если Telegram отдаёт заглушку).
+alter table public.vz_users add column if not exists photo_custom text;
+insert into storage.buckets (id, name, public) values ('vz-ava', 'vz-ava', true) on conflict (id) do nothing;
