@@ -156,15 +156,19 @@ async function renderFeed() {
     $app.innerHTML = `<div class="empty">Заполните хотя бы одно поле в профиле, и здесь появятся карточки авторов с тем же полем.</div>`;
     return;
   }
-  if (!mine.includes(state.field)) state.field = mine[0];
-  const chips = mine.map((f) => `<button class="chip ${f === state.field ? "on" : ""}" data-field="${f}">${FIELDS[f].name}</button>`).join("");
-  $app.innerHTML = `<div class="chips">${chips}</div><div id="slot" class="empty">Загрузка…</div>`;
-  const { card } = await api("feed", { field: state.field });
+  $app.innerHTML = `<div id="slot" class="empty">Загрузка…</div>`;
+  // Одна общая лента вперемешку: по кругу берём следующую карточку из каждого заполненного поля.
+  let card = null;
+  for (let i = 0; i < mine.length && !card; i++) {
+    const f = mine[(state.rr ?? 0) % mine.length];
+    state.rr = (state.rr ?? 0) + 1;
+    card = (await api("feed", { field: f })).card;
+  }
   state.card = card;
   const slot = document.getElementById("slot");
   if (!card) { slot.textContent = "Новых карточек пока нет. Загляните позже."; return; }
   slot.className = "card";
-  slot.innerHTML = cardHtml(card) + `
+  slot.innerHTML = `<div class="chip on" style="display:inline-block;margin-bottom:12px">${FIELDS[card.field].name}</div>` + cardHtml(card) + `
     <div class="row">
       <button class="btn ghost" data-act="skip">Дальше</button>
       <button class="btn" data-act="shot">📎 Прикрепить скрин</button>
