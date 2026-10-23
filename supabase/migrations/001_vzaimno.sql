@@ -185,3 +185,7 @@ alter table public.vz_users add column if not exists last_seen_at timestamptz;
 alter table public.vz_reports add column if not exists task_id bigint references public.vz_tasks (id) on delete set null;
 alter table public.vz_reports drop constraint if exists vz_reports_from_id_to_id_key;
 create unique index if not exists vz_reports_uniq on public.vz_reports (from_id, to_id, task_id) nulls not distinct;
+
+-- Раз в день в 10:00 по Таиланду (03:00 UTC): админам число новых пользователей.
+select cron.schedule('vzaimno-daily', '0 3 * * *',
+  $$select net.http_post(url := 'https://ogqtywdsplyqwfznqxnu.supabase.co/functions/v1/vzaimno?daily=1', body := '{}'::jsonb)$$);

@@ -329,12 +329,24 @@ async function cron() {
   }
 }
 
+// Раз в день админам: сколько новых пользователей за сутки.
+async function daily() {
+  const since = new Date(Date.now() - 24 * H).toISOString();
+  const { count: fresh } = await db.from("vz_users").select("tg_id", { count: "exact", head: true }).gt("created_at", since);
+  const { count: total } = await db.from("vz_users").select("tg_id", { count: "exact", head: true });
+  const { data: admins } = await db.from("vz_users").select("tg_id").eq("is_admin", true);
+  for (const a of admins ?? []) {
+    await send(a.tg_id, `<b>За сутки новых пользователей: ${fresh ?? 0}</b>\nВсего в боте: ${total ?? 0}`);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   const url = new URL(req.url);
 
   // cron и setup безопасно вызывать повторно: они ничего не раскрывают.
   if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
+  if (url.searchParams.has("daily")) { await daily(); return new Response("ok"); }
   if (url.searchParams.has("setup")) {
     const hook = await tg("setWebhook", {
       url: `https://${url.host}/functions/v1/vzaimno`, secret_token: await SECRET, allowed_updates: ["message"],
