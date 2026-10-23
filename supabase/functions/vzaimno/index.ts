@@ -1,8 +1,10 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const TOKEN = Deno.env.get("VZ_BOT_TOKEN")!;
-const SECRET = Deno.env.get("VZ_WEBHOOK_SECRET")!;
-const WEBAPP_URL = Deno.env.get("VZ_WEBAPP_URL")!;
+const WEBAPP_URL = "https://starseedsoultype.github.io/vzaimno/";
+// Секрет вебхука выводится из токена: отдельный секрет хранить не нужно.
+const SECRET = crypto.subtle.digest("SHA-256", new TextEncoder().encode(TOKEN))
+  .then((d) => [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join(""));
 const API = `https://api.telegram.org/bot${TOKEN}`;
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const BUCKET = "vz-shots";
@@ -221,12 +223,17 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   const url = new URL(req.url);
 
-  if (req.headers.get("x-telegram-bot-api-secret-token") === SECRET) {
-    if (url.searchParams.has("cron")) await cron();
-    else if (url.searchParams.has("setup")) {
-      await tg("setWebhook", { url: `${url.origin}/functions/v1/vzaimno`, secret_token: SECRET, allowed_updates: ["message"] });
-      await tg("setChatMenuButton", { menu_button: { type: "web_app", text: "Взаимно", web_app: { url: WEBAPP_URL } } });
-    } else await onBotUpdate(await req.json()).catch(console.error);
+  // cron и setup безопасно вызывать повторно: они ничего не раскрывают.
+  if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
+  if (url.searchParams.has("setup")) {
+    const hook = await tg("setWebhook", {
+      url: `https://${url.host}/functions/v1/vzaimno`, secret_token: await SECRET, allowed_updates: ["message"],
+    });
+    await tg("setChatMenuButton", { menu_button: { type: "web_app", text: "Взаимно", web_app: { url: WEBAPP_URL } } });
+    return json(hook);
+  }
+  if (req.headers.get("x-telegram-bot-api-secret-token") === await SECRET) {
+    await onBotUpdate(await req.json()).catch(console.error);
     return new Response("ok");
   }
 

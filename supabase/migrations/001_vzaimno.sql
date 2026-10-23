@@ -103,3 +103,9 @@ revoke execute on function public.vz_unanswered(bigint), public.vz_feed(bigint, 
   from public, anon, authenticated;
 
 alter table public.vz_users add column if not exists photo_url text;
+
+-- Раз в час: напоминания 24/48 часов.
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+select cron.schedule('vzaimno-hourly', '0 * * * *',
+  $$select net.http_post(url := 'https://ogqtywdsplyqwfznqxnu.supabase.co/functions/v1/vzaimno?cron=1', body := '{}'::jsonb)$$);
