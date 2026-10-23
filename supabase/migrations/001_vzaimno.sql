@@ -74,8 +74,8 @@ language sql stable as $$
   where u.tg_id <> me
     and to_jsonb(u) ->> f is not null
     and public.vz_unanswered(u.tg_id) < 10
-    -- уже выполнено мной или ждёт моего ответа во входящих
-    and not exists (select 1 from public.vz_tasks t where t.field = f and t.status = 'ok'
+    -- отработанная карточка больше не показывается (в любом статусе; повтор скрина идёт через «Входящие»)
+    and not exists (select 1 from public.vz_tasks t where t.field = f
                     and ((t.from_id = me and t.to_id = u.tg_id) or (t.from_id = u.tg_id and t.to_id = me)))
   order by
     u.is_pinned desc,
