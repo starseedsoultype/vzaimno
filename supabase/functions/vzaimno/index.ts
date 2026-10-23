@@ -45,7 +45,9 @@ async function tg(method: string, body: unknown) {
   return r.json();
 }
 const openBtn = (text = "Открыть Взаимно") => ({ inline_keyboard: [[{ text, web_app: { url: WEBAPP_URL } }]] });
-const send = (chat_id: number, text: string) => tg("sendMessage", { chat_id, text, reply_markup: openBtn() });
+const send = (chat_id: number, text: string) =>
+  tg("sendMessage", { chat_id, text, parse_mode: "HTML", reply_markup: openBtn() });
+const h = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 
 async function sendPhoto(chat_id: number, bytes: Uint8Array, caption: string) {
   const fd = new FormData();
@@ -144,6 +146,8 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     const path = `${me.tg_id}/${field}-${to.tg_id}-${reply ? "r" : "o"}-${Date.now()}.jpg`;
     await db.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg" });
     const now = new Date().toISOString();
+    // Первый обмен приглашённого: триггер в базе поднимает пригласившего на сутки.
+    const bonusFor = me.invited_by && !me.ref_bonus_given ? me.invited_by : null;
     await db.from("vz_tasks").upsert({
       field, from_id: me.tg_id, to_id: to.tg_id, is_reply: reply, shot_path: path, status: "ok",
       created_at: now, answered_at: null, reminded_at: null, notified_at: null,
@@ -157,6 +161,9 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
       ? `${name} ответил(а) вам взаимностью: ${LABEL[field]}.`
       : `${name} выполнил(а) задание: ${LABEL[field]}. Ответьте взаимностью во «Взаимно».`;
     await sendPhoto(to.tg_id, bytes, caption);
+    if (bonusFor) {
+      await send(bonusFor, `<b>🎉 ${h(name)} по вашему приглашению сделал(а) первый обмен. Ваша карточка сутки показывается всем наверху.</b>`);
+    }
     return { ok: true };
   },
 
@@ -169,7 +176,46 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
       await db.from("vz_tasks").update({ answered_at: null })
         .eq("field", t.field).eq("from_id", me.tg_id).eq("to_id", t.from_id).eq("is_reply", false);
     }
-    await send(t.from_id, `${me.name ?? "Автор"} не принял(а) ваш скрин: ${LABEL[t.field as Field]}. Пришлите скрин заново.`);
+    await send(t.from_id, `${h(me.name ?? "Автор")} не принял(а) ваш скрин: ${LABEL[t.field as Field]}. Пришлите скрин заново.`);
+    return { ok: true };
+  },
+
+  async report(me, b) {
+    const reason = ["scam", "fake", "other"].includes(b.reason) ? b.reason : "other";
+    const to = Number(b.to_id);
+    if (to === me.tg_id) return { error: "self" };
+    await db.from("vz_reports").upsert({ from_id: me.tg_id, to_id: to, reason },
+      { onConflict: "from_id,to_id", ignoreDuplicates: true });
+    return { ok: true };
+  },
+
+  async admin_list(me) {
+    if (!me.is_admin) return { error: "admin" };
+    const { data: users } = await db.from("vz_users").select("*").order("created_at", { ascending: false });
+    const { data: reports } = await db.from("vz_reports").select("to_id, reason");
+    const { data: rejected } = await db.from("vz_tasks").select("from_id").eq("status", "rejected");
+    const list = [];
+    for (const u of users ?? []) {
+      const rs = (reports ?? []).filter((r) => r.to_id === u.tg_id).map((r) => r.reason);
+      list.push({
+        tg_id: u.tg_id, name: u.name, photo: u.photo_custom ?? u.photo_url,
+        rating: await rating(u.tg_id), banned: u.banned, hidden: u.hidden, pinned: u.is_pinned,
+        rejected: (rejected ?? []).filter((t) => t.from_id === u.tg_id).length, reports: rs,
+        links: FIELDS.map((f) => u[f]).filter(Boolean),
+      });
+    }
+    return { users: list };
+  },
+
+  async admin_set(me, b) {
+    if (!me.is_admin) return { error: "admin" };
+    const patch: Record<string, boolean> = {};
+    if (typeof b.banned === "boolean") patch.banned = b.banned;
+    if (typeof b.hidden === "boolean") patch.hidden = b.hidden;
+    if (typeof b.pinned === "boolean") patch.is_pinned = b.pinned;
+    await db.from("vz_users").update(patch).eq("tg_id", b.tg_id);
+    // Вернули карточку после жалоб: счётчик жалоб обнуляется.
+    if (b.hidden === false) await db.from("vz_reports").delete().eq("to_id", b.tg_id);
     return { ok: true };
   },
 
@@ -216,14 +262,14 @@ async function cron() {
     .lt("created_at", new Date(now - 24 * H).toISOString()).limit(100);
   for (const t of remind ?? []) {
     const from = await getUser(t.from_id);
-    await send(t.to_id, `Напоминание: ${from?.name ?? "автор"} ждёт ответа взаимностью (${LABEL[t.field as Field]}).`);
+    await send(t.to_id, `Напоминание: ${h(from?.name ?? "автор")} ждёт ответа взаимностью (${LABEL[t.field as Field]}).`);
     await db.from("vz_tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id);
   }
   const { data: notify } = await base().is("notified_at", null)
     .lt("created_at", new Date(now - 48 * H).toISOString()).limit(100);
   for (const t of notify ?? []) {
     const to = await getUser(t.to_id);
-    await send(t.from_id, `${to?.name ?? "Автор"} пока не ответил(а) вам взаимностью (${LABEL[t.field as Field]}).`);
+    await send(t.from_id, `${h(to?.name ?? "Автор")} пока не ответил(а) вам взаимностью (${LABEL[t.field as Field]}).`);
     await db.from("vz_tasks").update({ notified_at: new Date().toISOString() }).eq("id", t.id);
   }
 }
@@ -259,6 +305,7 @@ Deno.serve(async (req) => {
   await db.from("vz_users").update({ name: auth.user.first_name ?? null, photo_url: auth.user.photo_url ?? null })
     .eq("tg_id", auth.user.id);
   me = await getUser(auth.user.id);
+  if (me.banned) return json({ error: "banned" }, 403);
   const fn = actions[b.action];
   if (!fn) return json({ error: "action" }, 400);
   try {

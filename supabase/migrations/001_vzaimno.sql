@@ -73,6 +73,7 @@ language sql stable as $$
   join stats s on s.tg_id = u.tg_id
   left join public.vz_skips k on k.user_id = me and k.target_id = u.tg_id and k.field = f
   where u.tg_id <> me
+    and not u.banned and not u.hidden
     -- отмечено вручную: «уже обменялись в чате»
     and not coalesce(k.done, false)
     and to_jsonb(u) ->> f is not null
@@ -141,3 +142,31 @@ revoke execute on function public.vz_invite_bonus() from public, anon, authentic
 drop trigger if exists vz_invite_bonus on public.vz_tasks;
 create trigger vz_invite_bonus after insert on public.vz_tasks
 for each row execute function public.vz_invite_bonus();
+
+-- Жалобы, баны, админ. После 3 жалоб от разных людей карточка скрывается до решения админа.
+alter table public.vz_users add column if not exists is_admin boolean not null default false;
+alter table public.vz_users add column if not exists banned boolean not null default false;
+alter table public.vz_users add column if not exists hidden boolean not null default false;
+
+create table if not exists public.vz_reports (
+  id bigserial primary key,
+  from_id bigint not null references public.vz_users (tg_id) on delete cascade,
+  to_id bigint not null references public.vz_users (tg_id) on delete cascade,
+  reason text not null,
+  created_at timestamptz not null default now(),
+  unique (from_id, to_id)
+);
+alter table public.vz_reports enable row level security;
+
+create or replace function public.vz_report_hide() returns trigger
+language plpgsql security definer set search_path = public as $fn$
+begin
+  if (select count(distinct from_id) from public.vz_reports where to_id = new.to_id) >= 3 then
+    update public.vz_users set hidden = true where tg_id = new.to_id;
+  end if;
+  return new;
+end $fn$;
+revoke execute on function public.vz_report_hide() from public, anon, authenticated;
+drop trigger if exists vz_report_hide on public.vz_reports;
+create trigger vz_report_hide after insert on public.vz_reports
+for each row execute function public.vz_report_hide();

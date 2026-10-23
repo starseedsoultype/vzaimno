@@ -51,6 +51,19 @@
   #done circle { fill: var(--accent); transform-origin: center; animation: pop .35s ease-out; }
   #done path { fill: none; stroke: var(--accent-text); stroke-width: 9; stroke-linecap: round; stroke-linejoin: round;
     stroke-dasharray: 120; stroke-dashoffset: 120; animation: draw .45s .25s ease-out forwards; }
+  .sheet { position: fixed; inset: 0; display: none; align-items: flex-end; background: rgba(0,0,0,.4); }
+  .sheet.show { display: flex; }
+  .sheet-box { width: 100%; background: var(--bg); border-radius: 20px 20px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); display: grid; gap: 10px; }
+  .report { margin-top: 12px; border: 0; background: none; color: var(--hint); font-size: 13px; text-decoration: underline; }
+  .bonus { margin-top: 10px; text-align: center; font-weight: 700; font-size: 15px; }
+  .rules b { display: block; margin-top: 16px; font-size: 17px; }
+  .rules p { margin: 6px 0 0; }
+  .adm { text-align: left; }
+  .adm .ava { width: 48px; height: 48px; font-size: 20px; margin: 0 0 8px; }
+  .adm .meta { color: var(--hint); font-size: 13px; margin-top: 4px; word-break: break-all; }
+  .adm .row { flex-wrap: wrap; }
+  .adm .btn { flex: 1 1 30%; padding: 10px; font-size: 14px; }
+  nav button[hidden] { display: none; }
   @keyframes pop { from { transform: scale(0); } 70% { transform: scale(1.1); } to { transform: scale(1); } }
   @keyframes draw { to { stroke-dashoffset: 0; } }
 </style>
@@ -61,7 +74,18 @@
   <button data-tab="feed" class="on">Лента</button>
   <button data-tab="inbox">Входящие</button>
   <button data-tab="profile">Профиль</button>
+  <button data-tab="rules">Правила</button>
+  <button data-tab="admin" id="nav-admin" hidden>Админ</button>
 </nav>
+<div id="sheet" class="sheet">
+  <div class="sheet-box">
+    <div class="task">На что жалоба?</div>
+    <button class="btn red" data-reason="scam">Скам-ссылка</button>
+    <button class="btn red" data-reason="fake">Фейковые скрины</button>
+    <button class="btn red" data-reason="other">Другое</button>
+    <button class="btn ghost" data-reason="">Отмена</button>
+  </div>
+</div>
 <div id="done"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/><path d="M28 52 L44 67 L73 36"/></svg></div>
 <input id="file" type="file" accept="image/*" hidden>
 <input id="ava" type="file" accept="image/*" hidden>
@@ -142,7 +166,8 @@ async function renderFeed() {
       <button class="btn" data-act="shot">📎 Прикрепить скрин</button>
     </div>
     <div class="paste">С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь</div>
-    <div class="row"><button class="btn ghost" data-act="chat">Уже обменялись в чате</button></div>`;
+    <div class="row"><button class="btn ghost" data-act="chat">Уже обменялись в чате</button></div>
+    <button class="report" data-act="report">Пожаловаться</button>`;
   state.upload = { field: card.field, to_id: card.tg_id, reply: false };
 }
 
@@ -184,6 +209,7 @@ function renderProfile() {
       <div class="row"><button class="btn" type="submit">Сохранить</button></div>
     </form>
     <div class="row"><button class="btn ghost" data-act="invite">Пригласить автора</button></div>
+    <div class="bonus">За каждого приглашённого, кто сделает первый обмен, ваша карточка сутки показывается всем наверху</div>
     <div class="safe" style="text-align:center">Все поля по желанию. Принимаются только ссылки litres.ru, t.me, vk.com, boosty.to.</div>`;
   document.getElementById("pf").onsubmit = async (e) => {
     e.preventDefault();
@@ -256,6 +282,17 @@ document.addEventListener("click", async (e) => {
     t.dataset.open.startsWith("https://t.me/") ? tg.openTelegramLink(t.dataset.open) : tg.openLink(t.dataset.open);
   } else if (t.dataset.act === "skip") {
     await api("skip", { field: state.card.field, to_id: state.card.tg_id }); renderFeed();
+  } else if (t.dataset.act === "report") {
+    document.getElementById("sheet").classList.add("show");
+  } else if (t.dataset.reason !== undefined) {
+    document.getElementById("sheet").classList.remove("show");
+    if (t.dataset.reason) {
+      await api("report", { to_id: state.card.tg_id, reason: t.dataset.reason });
+      tg.showAlert("Жалоба отправлена.");
+    }
+  } else if (t.dataset.adm) {
+    await api("admin_set", { tg_id: Number(t.dataset.adm), [t.dataset.key]: t.dataset.val === "true" });
+    renderAdmin();
   } else if (t.dataset.act === "chat") {
     tg.showConfirm("Скрыть эту карточку навсегда? Без скрина и уведомлений.", async (yes) => {
       if (!yes) return;
@@ -280,16 +317,57 @@ document.addEventListener("click", async (e) => {
   }
 });
 
+// Текст правил: Content Creator, проверка Brand Guardian.
+const RULES = `<b>Профиль</b>
+<p>В профиле 5 полей, все по желанию: книга и профиль автора на ЛитРес, группа в Телеграме, ВК, Бусти. Принимаются только ссылки с litres.ru, t.me, vk.com, vk.ru и boosty.to, поэтому в карточках нет скама.</p>
+<b>Обмен по полям</b>
+<p>Книга на книгу, профиль на профиль, группа на группу. В ленте вы видите авторов, у которых заполнено то же поле.</p>
+<b>Как обменяться</b>
+<p>Откройте ссылку в карточке, поставьте книге 5 звёзд или подпишитесь, вернитесь и прикрепите скрин. С компьютера его можно вставить через Ctrl+V. Автор получит ваш скрин и карточку, а в ответ пришлёт свой скрин.</p>
+<b>Скрин обязателен</b>
+<p>Если скрин не подтверждает задание, автор нажмёт «Это не то», и скрин нужно будет прислать заново. Если вам не ответили, через 24 часа бот напомнит автору, а через 48 часов сообщит вам.</p>
+<b>Рейтинг</b>
+<p>Это процент обменов, на которые человек ответил взаимностью. Рейтинг виден всем: 🟢 от 80%, 🟡 от 50 до 79%, 🔴 меньше 50%, ⚪ новичок.</p>
+<b>Порядок в ленте</b>
+<p>Выше показываются те, кто больше отдаёт, чем получает. Если у автора 10 обменов без ответа, его карточка временно скрывается, пока он не ответит.</p>
+<b>Кнопки</b>
+<p>«Уже обменялись в чате» скрывает карточку навсегда, без скрина и уведомлений. «Дальше» отправляет её в конец очереди.</p>
+<b>Приглашения</b>
+<p>Новый автор, пришедший по вашей ссылке, первой увидит вашу карточку. За каждого приглашённого, который сделал первый обмен, ваша карточка сутки показывается всем в начале ленты.</p>
+<b>Жалобы</b>
+<p>Пожаловаться можно на ссылку со скамом, фейковые скрины или другое нарушение. После 3 жалоб от разных людей карточка скрывается до решения администратора. За нарушения он может заблокировать доступ.</p>`;
+
+const REASON = { scam: "скам-ссылка", fake: "фейковые скрины", other: "другое" };
+
+async function renderAdmin() {
+  $app.innerHTML = `<div class="empty">Загрузка…</div>`;
+  const { users } = await api("admin_list");
+  $app.innerHTML = (users ?? []).map((u) => `<div class="card item adm">
+      ${avatar(u)}<b>${esc(u.name ?? "Автор")}</b> · ${badge(u.rating)}
+      ${u.banned ? " · ⛔ бан" : ""}${u.hidden ? " · 🙈 скрыт" : ""}${u.pinned ? " · 📌" : ""}
+      <div class="meta">Отклонённых скринов: ${u.rejected}. Жалоб: ${u.reports.length}${u.reports.length ? " (" + u.reports.map((r) => REASON[r]).join(", ") + ")" : ""}</div>
+      <div class="meta">${u.links.map(esc).join("<br>")}</div>
+      <div class="row">
+        <button class="btn ${u.banned ? "ghost" : "red"}" data-adm="${u.tg_id}" data-key="banned" data-val="${!u.banned}">${u.banned ? "Разбанить" : "Забанить"}</button>
+        <button class="btn ghost" data-adm="${u.tg_id}" data-key="hidden" data-val="${!u.hidden}">${u.hidden ? "Вернуть в ленту" : "Скрыть"}</button>
+        <button class="btn ghost" data-adm="${u.tg_id}" data-key="pinned" data-val="${!u.pinned}">${u.pinned ? "Открепить" : "Закрепить"}</button>
+      </div></div>`).join("") || `<div class="empty">Пока никого.</div>`;
+}
+
 function render() {
   if (state.tab === "feed") renderFeed();
   else if (state.tab === "inbox") renderInbox();
+  else if (state.tab === "rules") $app.innerHTML = `<div class="rules">${RULES}</div>`;
+  else if (state.tab === "admin") renderAdmin();
   else renderProfile();
 }
 
 (async () => {
   const me = await api("me");
+  if (me.error === "banned") { $app.innerHTML = `<div class="empty">Доступ закрыт.</div>`; return; }
   if (me.error) { $app.innerHTML = `<div class="empty">Откройте Взаимно из Telegram.</div>`; return; }
   state.me = me;
+  document.getElementById("nav-admin").hidden = !me.user.is_admin;
   if (!Object.keys(FIELDS).some((f) => me.user[f])) {
     state.tab = "profile";
     document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === "profile"));
