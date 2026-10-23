@@ -83,6 +83,7 @@ language sql stable as $$
   order by
     u.is_pinned desc,
     (u.tg_id is not distinct from (select invited_by from me_row)) desc,
+    (u.boost_until > now()) is true desc,
     (k.skipped_at is not null),
     k.skipped_at,
     (s.got < 3) desc,
@@ -116,3 +117,27 @@ select cron.schedule('vzaimno-hourly', '0 * * * *',
 -- Своё фото профиля (если Telegram отдаёт заглушку).
 alter table public.vz_users add column if not exists photo_custom text;
 insert into storage.buckets (id, name, public) values ('vz-ava', 'vz-ava', true) on conflict (id) do nothing;
+
+-- Бонус за приглашение: первый обмен приглашённого даёт пригласившему сутки наверху ленты.
+alter table public.vz_users add column if not exists boost_until timestamptz;
+alter table public.vz_users add column if not exists ref_bonus_given boolean not null default false;
+
+create or replace function public.vz_invite_bonus() returns trigger
+language plpgsql security definer set search_path = public as $fn$
+declare inviter bigint;
+begin
+  update public.vz_users set ref_bonus_given = true
+  where tg_id = new.from_id and invited_by is not null and not ref_bonus_given
+  returning invited_by into inviter;
+  if inviter is not null then
+    update public.vz_users
+    set boost_until = greatest(coalesce(boost_until, now()), now()) + interval '24 hours'
+    where tg_id = inviter;
+  end if;
+  return new;
+end $fn$;
+revoke execute on function public.vz_invite_bonus() from public, anon, authenticated;
+
+drop trigger if exists vz_invite_bonus on public.vz_tasks;
+create trigger vz_invite_bonus after insert on public.vz_tasks
+for each row execute function public.vz_invite_bonus();
