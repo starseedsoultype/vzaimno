@@ -117,6 +117,9 @@ const FIELDS = {
   tiktok:  { name: "TikTok",         task: "Подпишитесь на TikTok", hint: "https://www.tiktok.com/@..." },
   insta:   { name: "Instagram",      task: "Подпишитесь на Instagram", hint: "https://www.instagram.com/..." },
 };
+// Поля профиля плюс рилс: подписи для карточек и заданий.
+const INFO = { ...FIELDS, reel: { name: "Рилс", task: "Оставьте комментарий, сохраните и перешлите (скопируйте ссылку)" } };
+const REEL = /^https:\/\/((www\.)?instagram\.com\/(reels?|p)\/[\w-]+|(www\.|vm\.)?tiktok\.com\/(@[\w.]+\/video\/\d+|[\w]+)|(m\.)?vk\.(com|ru)\/clip-?\d+_\d+|(www\.)?youtube\.com\/shorts\/[\w-]+)\/?(\?\S*)?$/;
 const PATTERN = {
   book: /^https:\/\/(www\.)?litres\.ru\/(book\/\S+|\d+\/?)$/,
   profile: /^https:\/\/(www\.)?litres\.ru\/author\/[\w-]+\/?$/,
@@ -162,7 +165,7 @@ function cover(c) {
 function cardHtml(c, task) {
   return `${cover(c)}${avatar(c)}<h2>${esc(c.name)}</h2>
     <div class="rating">${badge(c.rating)}</div>
-    <div class="task">${esc(task ?? FIELDS[c.field].task)}</div>
+    <div class="task">${esc(task ?? INFO[c.field].task)}</div>
     <button class="link" data-open="${esc(c.url)}">${esc(c.url)}</button>
     <div class="safe">🔒 Ссылки проверены: только litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com</div>`;
 }
@@ -187,7 +190,7 @@ function toast(text) {
   setTimeout(() => el.remove(), 3300);
 }
 const WHAT = { book: "⭐ звезда книге", profile: "подписка на профиль", tg: "подписка в ТГ", vk: "подписка в ВК",
-  boosty: "подписка на Бусти", tiktok: "подписка в TikTok", insta: "подписка в Instagram" };
+  reel: "поддержка рилса", boosty: "подписка на Бусти", tiktok: "подписка в TikTok", insta: "подписка в Instagram" };
 function showEvents(events) {
   (events ?? []).slice(0, 4).forEach((e, i) => setTimeout(() => {
     toast(e.is_reply ? `+1 ${WHAT[e.field]} от ${e.name}` : `${e.name} ждёт вашего ответа: ${WHAT[e.field]}`);
@@ -205,9 +208,12 @@ async function refreshMe() {
   state.me = me; updateBadge(); showEvents(me.events);
 }
 
+// Рилс скрывается по своему номеру, остальные карточки по полю.
+const skipField = (c) => (c.field === "reel" ? `reel:${c.reel_id}` : c.field);
+
 // ---------- Лента ----------
 async function renderFeed() {
-  const mine = Object.keys(FIELDS).filter((f) => state.me.user[f]);
+  const mine = Object.keys(FIELDS).filter((f) => state.me.user[f]).concat(state.reels?.length ? ["reel"] : []);
   if (!mine.length) {
     $app.innerHTML = `<div class="empty">Заполните хотя бы одно поле в профиле, и здесь появятся карточки авторов с тем же полем.</div>`;
     return;
@@ -224,7 +230,7 @@ async function renderFeed() {
   const slot = document.getElementById("slot");
   if (!card) { slot.textContent = "Новых карточек пока нет. Загляните позже."; return; }
   slot.className = "card";
-  slot.innerHTML = `<div class="chip on" style="display:inline-block;margin-bottom:12px">${FIELDS[card.field].name}</div>` + cardHtml(card) + `
+  slot.innerHTML = `<div class="chip on" style="display:inline-block;margin-bottom:12px">${INFO[card.field].name}</div>` + cardHtml(card) + `
     <div class="row">
       <button class="btn ghost" data-act="skip">Дальше</button>
       <button class="btn" data-act="shot">📎 Прикрепить скрин</button>
@@ -232,7 +238,7 @@ async function renderFeed() {
     <div class="paste">С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь</div>
     <div class="row"><button class="btn ghost" data-act="chat">Уже обменялись в чате</button></div>
     <button class="report" data-act="report">Пожаловаться</button>`;
-  state.upload = { field: card.field, to_id: card.tg_id, reply: false };
+  state.upload = { field: card.field, to_id: card.tg_id, reply: false, reel_id: card.reel_id };
 }
 
 // ---------- Входящие ----------
@@ -245,14 +251,14 @@ async function renderInbox() {
     const c = it.card;
     let title, buttons;
     if (it.kind === "reply") {
-      title = `Выполнил(а) ваше задание. Ответьте тем же: ${FIELDS[c.field].task.toLowerCase()}`;
+      title = `Выполнил(а) ваше задание. Ответьте тем же: ${INFO[c.field].task.toLowerCase()}`;
       buttons = `<button class="btn red" data-reject="${it.id}">❌ Это не то</button>
                  <button class="btn" data-reply="${it.id}">📎 Ответить скрином</button>`;
     } else if (it.kind === "received") {
       title = it.is_reply ? "Ответил(а) вам взаимностью" : "Вы уже ответили взаимностью";
       buttons = `<button class="btn red" data-reject="${it.id}">❌ Это не то</button>`;
     } else {
-      title = `Ваш скрин не принят. Пришлите заново: ${FIELDS[c.field].task.toLowerCase()}`;
+      title = `Ваш скрин не принят. Пришлите заново: ${INFO[c.field].task.toLowerCase()}`;
       buttons = `<button class="btn" data-resend="${it.id}">📎 Прислать заново</button>`;
     }
     return `<div class="card item" data-item="${it.id}">${cardHtml(c, title)}
@@ -273,6 +279,10 @@ function renderProfile() {
     <form id="pf">${inputs}
       <div class="row"><button class="btn" type="submit">Сохранить</button></div>
     </form>
+    <label>Мои рилсы (живут 48 часов, до 2 одновременно)</label>
+    ${(state.reels ?? []).map((r) => `<div class="safe" style="word-break:break-all">🎬 ${esc(r.url)} · ещё ${Math.max(1, Math.ceil(48 - (Date.now() - new Date(r.created_at)) / 3600000))} ч</div>`).join("")}
+    <input type="url" id="reelurl" placeholder="https://www.instagram.com/reel/...">
+    <div class="row"><button class="btn ghost" data-act="reel">Добавить рилс</button></div>
     <div class="row"><button class="btn ghost" data-act="invite">Пригласить автора</button></div>
     <div class="bonus">За каждого приглашённого, кто сделает первый обмен, ваша карточка сутки показывается всем наверху</div>
     <div class="safe" style="text-align:center">Нужна другая площадка? Напишите <button class="report" style="margin:0" data-open="https://t.me/alexaai111">@alexaai111</button></div>
@@ -316,6 +326,7 @@ async function sendShot(file) {
   if (!state.upload || !file?.type.startsWith("image/")) return;
   const image = await compress(file);
   const r = await api("shot", { ...state.upload, image });
+  if (r.error === "noreel") { tg.showAlert("Чтобы поддерживать рилсы, добавьте свой рилс в профиле."); return; }
   if (r.error) { tg.showAlert("Не получилось отправить скрин. Попробуйте ещё раз."); return; }
   const done = document.getElementById("done");
   done.classList.add("show");
@@ -347,7 +358,7 @@ document.addEventListener("click", async (e) => {
   } else if (t.dataset.open) {
     t.dataset.open.startsWith("https://t.me/") ? tg.openTelegramLink(t.dataset.open) : tg.openLink(t.dataset.open);
   } else if (t.dataset.act === "skip") {
-    await api("skip", { field: state.card.field, to_id: state.card.tg_id }); renderFeed();
+    await api("skip", { field: skipField(state.card), to_id: state.card.tg_id }); renderFeed();
   } else if (t.dataset.act === "report") {
     document.getElementById("sheet").classList.add("show");
   } else if (t.dataset.reason !== undefined) {
@@ -370,8 +381,14 @@ document.addEventListener("click", async (e) => {
   } else if (t.dataset.act === "chat") {
     tg.showConfirm("Скрыть эту карточку навсегда? Без скрина и уведомлений.", async (yes) => {
       if (!yes) return;
-      await api("skip", { field: state.card.field, to_id: state.card.tg_id, done: true }); renderFeed();
+      await api("skip", { field: skipField(state.card), to_id: state.card.tg_id, done: true }); renderFeed();
     });
+  } else if (t.dataset.act === "reel") {
+    const url = document.getElementById("reelurl").value.trim();
+    if (!REEL.test(url)) { tg.showAlert("Нужна ссылка на конкретное видео: Instagram, TikTok, ВК Клипы или YouTube Shorts."); return; }
+    const r = await api("reel_add", { url });
+    if (r.error) { tg.showAlert("Ссылка не прошла проверку."); return; }
+    state.reels = r.reels; tg.HapticFeedback?.notificationOccurred("success"); renderProfile();
   } else if (t.dataset.act === "ava") {
     document.getElementById("ava").click();
   } else if (t.dataset.act === "shot") {
@@ -381,7 +398,7 @@ document.addEventListener("click", async (e) => {
     tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.")}`);
   } else if (t.dataset.reply || t.dataset.resend) {
     const it = state.items[t.dataset.reply || t.dataset.resend];
-    state.upload = { field: it.card.field, to_id: it.card.tg_id, reply: !!t.dataset.reply || it.is_reply };
+    state.upload = { field: it.card.field, to_id: it.card.tg_id, reply: !!t.dataset.reply || it.is_reply, reel_id: it.card.reel_id };
     document.getElementById("file").click();
   } else if (t.dataset.reject) {
     tg.showConfirm("Скрин не подтверждает задание?", async (yes) => {
@@ -470,6 +487,7 @@ function render() {
   state.me = me;
   document.getElementById("nav-admin").hidden = !me.user.is_admin;
   updateBadge(); showEvents(me.events);
+  state.reels = (await api("reels")).reels ?? [];
   if (!Object.keys(FIELDS).some((f) => me.user[f])) {
     state.tab = "profile";
     document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === "profile"));

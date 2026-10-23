@@ -189,3 +189,50 @@ create unique index if not exists vz_reports_uniq on public.vz_reports (from_id,
 -- Раз в день в 10:00 по Таиланду (03:00 UTC): админам число новых пользователей.
 select cron.schedule('vzaimno-daily', '0 3 * * *',
   $$select net.http_post(url := 'https://ogqtywdsplyqwfznqxnu.supabase.co/functions/v1/vzaimno?daily=1', body := '{}'::jsonb)$$);
+
+-- Рилсы: живут 48 часов, у человека до 2 активных (новый вытесняет старый через retired).
+create table if not exists public.vz_reels (
+  id bigserial primary key,
+  user_id bigint not null references public.vz_users (tg_id) on delete cascade,
+  url text not null,
+  retired boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists vz_reels_user_idx on public.vz_reels (user_id, created_at desc);
+alter table public.vz_reels enable row level security;
+
+-- reel_id: какой рилс поддержали; back_reel_id: рилс отправителя, которым ему отвечают.
+alter table public.vz_tasks add column if not exists reel_id bigint references public.vz_reels (id) on delete cascade;
+alter table public.vz_tasks add column if not exists back_reel_id bigint references public.vz_reels (id) on delete set null;
+alter table public.vz_tasks drop constraint if exists vz_tasks_field_check;
+alter table public.vz_tasks add constraint vz_tasks_field_check
+  check (field in ('book', 'profile', 'tg', 'vk', 'boosty', 'tiktok', 'insta', 'reel'));
+alter table public.vz_tasks drop constraint if exists vz_tasks_field_from_id_to_id_is_reply_key;
+create unique index if not exists vz_tasks_uniq on public.vz_tasks (field, from_id, to_id, is_reply, reel_id) nulls not distinct;
+
+-- Лента рилсов: свежие, чужие, ещё не поддержанные и не скрытые мной.
+create or replace function public.vz_reel_feed(me bigint, lim int default 20)
+returns table (reel_id bigint, url text, owner bigint)
+language sql stable set search_path = public as $$
+  select r.id, r.url, r.user_id
+  from public.vz_reels r
+  join public.vz_users u on u.tg_id = r.user_id
+  left join public.vz_skips k on k.user_id = me and k.target_id = r.user_id and k.field = 'reel:' || r.id
+  where r.created_at > now() - interval '48 hours' and not r.retired
+    and r.user_id <> me
+    and not u.banned and not u.hidden
+    and not coalesce(k.done, false)
+    and public.vz_unanswered(u.tg_id) < 10
+    and not exists (select 1 from public.vz_tasks t where t.reel_id = r.id and t.from_id = me)
+    and not exists (select 1 from public.vz_tasks t where t.field = 'reel' and t.from_id = r.user_id and t.to_id = me
+                    and not t.is_reply and t.answered_at is null and t.status = 'ok')
+  order by
+    u.is_pinned desc,
+    (u.boost_until > now()) is true desc,
+    (k.skipped_at is not null),
+    k.skipped_at,
+    (select count(*) from public.vz_tasks t where t.reel_id = r.id),
+    r.created_at desc
+  limit lim
+$$;
+revoke execute on function public.vz_reel_feed(bigint, int) from public, anon, authenticated;

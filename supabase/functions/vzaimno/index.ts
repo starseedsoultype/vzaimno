@@ -21,8 +21,9 @@ const DESCRIPTION = `Взаимно помогает авторам и блог�
 const ABOUT = "Обмен оценками и подписками для авторов и блогеров. Карточки в ленте, подтверждение скрином, рейтинг взаимности.";
 
 const FIELDS = ["book", "profile", "tg", "vk", "boosty", "tiktok", "insta"] as const;
-type Field = typeof FIELDS[number];
+type Field = typeof FIELDS[number] | "reel";
 const LABEL: Record<Field, string> = {
+  reel: "поддержка рилса (комментарий, сохранение, пересылка)",
   book: "оценка книге на ЛитРес",
   profile: "подписка на профиль ЛитРес",
   tg: "подписка на ТГ-группу",
@@ -32,7 +33,10 @@ const LABEL: Record<Field, string> = {
   insta: "подписка на Instagram",
 };
 // Только эти адреса, чтобы в карточках не было скама.
-const PATTERN: Record<Field, RegExp> = {
+// Рилсы: конкретное видео в Instagram, TikTok, ВК Клипах или YouTube Shorts.
+const REEL = /^https:\/\/((www\.)?instagram\.com\/(reels?|p)\/[\w-]+|(www\.|vm\.)?tiktok\.com\/(@[\w.]+\/video\/\d+|[\w]+)|(m\.)?vk\.(com|ru)\/clip-?\d+_\d+|(www\.)?youtube\.com\/shorts\/[\w-]+)\/?(\?\S*)?$/;
+const REEL_TTL = 48 * H;
+const PATTERN: Record<typeof FIELDS[number], RegExp> = {
   book: /^https:\/\/(www\.)?litres\.ru\/(book\/\S+|\d+\/?)$/,
   profile: /^https:\/\/(www\.)?litres\.ru\/author\/[\w-]+\/?$/,
   tg: /^https:\/\/t\.me\/[\w+]+\/?$/,
@@ -106,8 +110,21 @@ function decodeImage(dataUrl: string) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
-async function card(u: any, field: Field) {
-  return { tg_id: u.tg_id, name: u.name ?? "Автор", photo: u.photo_custom ?? u.photo_url, url: u[field], field, rating: await rating(u.tg_id) };
+async function card(u: any, field: Field, reel?: { id: number; url: string } | null) {
+  return {
+    tg_id: u.tg_id, name: u.name ?? "Автор", photo: u.photo_custom ?? u.photo_url,
+    url: reel ? reel.url : u[field], reel_id: reel?.id ?? null, field, rating: await rating(u.tg_id),
+  };
+}
+async function getReel(id: number | null) {
+  if (!id) return null;
+  const { data } = await db.from("vz_reels").select("*").eq("id", id).maybeSingle();
+  return data;
+}
+async function activeReels(uid: number) {
+  const { data } = await db.from("vz_reels").select("*").eq("user_id", uid).eq("retired", false)
+    .gt("created_at", new Date(Date.now() - REEL_TTL).toISOString()).order("created_at", { ascending: false });
+  return data ?? [];
 }
 
 const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
@@ -163,9 +180,30 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     return { ok: true };
   },
 
+  async reels(me) {
+    return { reels: await activeReels(me.tg_id) };
+  },
+
+  // Новый рилс; у человека не больше 2 активных, самый старый уходит.
+  async reel_add(me, b) {
+    const url = String(b.url ?? "").trim();
+    if (!REEL.test(url)) return { error: "reel" };
+    await db.from("vz_reels").insert({ user_id: me.tg_id, url });
+    const old = (await activeReels(me.tg_id)).slice(2).map((r) => r.id);
+    if (old.length) await db.from("vz_reels").update({ retired: true }).in("id", old);
+    return { reels: await activeReels(me.tg_id) };
+  },
+
   async feed(me, b) {
+    if (b.field === "reel") {
+      if (!(await activeReels(me.tg_id)).length) return { card: null };
+      const { data } = await db.rpc("vz_reel_feed", { me: me.tg_id, lim: 1 });
+      const r = data?.[0];
+      const owner = r ? await getUser(r.owner) : null;
+      return { card: owner ? await card(owner, "reel", { id: r.reel_id, url: r.url }) : null };
+    }
     const field = b.field as Field;
-    if (!FIELDS.includes(field) || !me[field]) return { card: null };
+    if (!FIELDS.includes(field as any) || !me[field]) return { card: null };
     const { data } = await db.rpc("vz_feed", { me: me.tg_id, f: field, lim: 1 });
     return { card: data?.[0] ? await card(data[0], field) : null };
   },
@@ -181,8 +219,16 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
   async shot(me, b) {
     const field = b.field as Field;
     const to = await getUser(Number(b.to_id));
-    if (!FIELDS.includes(field) || !to || !to[field] || !me[field]) return { error: "field" };
     const reply = !!b.reply;
+    let reel_id: number | null = null, back_reel_id: number | null = null;
+    if (field === "reel") {
+      const reel = await getReel(Number(b.reel_id));
+      if (!to || !reel || reel.user_id !== to.tg_id) return { error: "field" };
+      reel_id = reel.id;
+      // Мой свежий рилс: им мне ответят взаимностью.
+      if (!reply) back_reel_id = (await activeReels(me.tg_id))[0]?.id ?? null;
+      if (!reply && !back_reel_id) return { error: "noreel" };
+    } else if (!FIELDS.includes(field as any) || !to || !to[field] || !me[field]) return { error: "field" };
     const bytes = decodeImage(String(b.image));
     const path = `${me.tg_id}/${field}-${to.tg_id}-${reply ? "r" : "o"}-${Date.now()}.jpg`;
     await db.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg" });
@@ -191,11 +237,13 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     const bonusFor = me.invited_by && !me.ref_bonus_given ? me.invited_by : null;
     await db.from("vz_tasks").upsert({
       field, from_id: me.tg_id, to_id: to.tg_id, is_reply: reply, shot_path: path, status: "ok",
-      created_at: now, answered_at: null, reminded_at: null, notified_at: null,
-    }, { onConflict: "field,from_id,to_id,is_reply" });
+      created_at: now, answered_at: null, reminded_at: null, notified_at: null, reel_id, back_reel_id,
+    }, { onConflict: "field,from_id,to_id,is_reply,reel_id" });
     if (reply) {
-      await db.from("vz_tasks").update({ answered_at: now })
+      let q = db.from("vz_tasks").update({ answered_at: now })
         .eq("field", field).eq("from_id", to.tg_id).eq("to_id", me.tg_id).eq("is_reply", false);
+      if (field === "reel") q = q.eq("back_reel_id", reel_id);
+      await q;
     }
     const name = me.name ?? "Автор";
     const caption = reply
@@ -214,8 +262,10 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     if (!t) return { error: "task" };
     await db.from("vz_tasks").update({ status: "rejected" }).eq("id", t.id);
     if (t.is_reply) {
-      await db.from("vz_tasks").update({ answered_at: null })
+      let q = db.from("vz_tasks").update({ answered_at: null })
         .eq("field", t.field).eq("from_id", me.tg_id).eq("to_id", t.from_id).eq("is_reply", false);
+      if (t.field === "reel") q = q.eq("back_reel_id", t.reel_id);
+      await q;
     }
     await send(t.from_id, `${h(me.name ?? "Автор")} не принял(а) ваш скрин: ${LABEL[t.field as Field]}. Пришлите скрин заново.`);
     return { ok: true };
@@ -285,11 +335,15 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
       const mine = t.from_id === me.tg_id;
       const other = await getUser(mine ? t.to_id : t.from_id);
       if (!other) continue;
+      const kind = mine ? "resend" : !t.is_reply && !t.answered_at ? "reply" : "received";
+      // Для рилса: отвечаем на рилс отправителя, повторяем на тот же рилс.
+      const reel = t.field === "reel" ? await getReel(kind === "reply" ? t.back_reel_id : t.reel_id) : null;
+      if (t.field === "reel" && !reel) continue;
       items.push({
         id: t.id,
-        kind: mine ? "resend" : !t.is_reply && !t.answered_at ? "reply" : "received",
+        kind,
         is_reply: t.is_reply,
-        card: await card(other, t.field),
+        card: await card(other, t.field, reel),
         shot: mine ? null : await signed(t.shot_path),
       });
     }
