@@ -214,6 +214,7 @@ function renderProfile() {
     </form>
     <div class="row"><button class="btn ghost" data-act="invite">Пригласить автора</button></div>
     <div class="bonus">За каждого приглашённого, кто сделает первый обмен, ваша карточка сутки показывается всем наверху</div>
+    <div class="safe" style="text-align:center">Нужна другая площадка? Напишите <a href="https://t.me/alexaai111">@alexaai111</a></div>
     <div class="safe" style="text-align:center">Все поля по желанию. Принимаются только ссылки litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com.</div>`;
   document.getElementById("pf").onsubmit = async (e) => {
     e.preventDefault();
@@ -308,7 +309,7 @@ document.addEventListener("click", async (e) => {
     document.getElementById("file").click();
   } else if (t.dataset.act === "invite") {
     const link = `https://t.me/${BOT}?startapp=ref_${state.me.user.tg_id}`;
-    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.")}`);
+    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.")}`);
   } else if (t.dataset.reply || t.dataset.resend) {
     const it = state.items[t.dataset.reply || t.dataset.resend];
     state.upload = { field: it.card.field, to_id: it.card.tg_id, reply: !!t.dataset.reply || it.is_reply };
