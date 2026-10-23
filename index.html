@@ -59,7 +59,7 @@
   .rules b { display: block; margin-top: 16px; font-size: 17px; }
   .rules p { margin: 6px 0 0; }
   .adm { text-align: left; }
-  .adm .ava { width: 48px; height: 48px; font-size: 20px; margin: 0 0 8px; }
+  .adm .ava { width: 96px; height: 96px; font-size: 36px; margin: 0 0 10px; }
   .adm .meta { color: var(--hint); font-size: 13px; margin-top: 4px; word-break: break-all; }
   .adm .row { flex-wrap: wrap; }
   .adm .btn { flex: 1 1 30%; padding: 10px; font-size: 14px; }
@@ -257,7 +257,8 @@ async function renderInbox() {
     }
     return `<div class="card item" data-item="${it.id}">${cardHtml(c, title)}
       ${it.shot ? `<img class="shot" src="${esc(it.shot)}" alt="скрин">` : ""}
-      <div class="row">${buttons}</div></div>`;
+      <div class="row">${buttons}</div>
+      ${it.shot ? `<button class="report" data-shotreport="${it.id}">Пожаловаться на скрин</button>` : ""}</div>`;
   }).join("");
   state.items = Object.fromEntries(items.map((it) => [it.id, it]));
 }
@@ -355,6 +356,14 @@ document.addEventListener("click", async (e) => {
       await api("report", { to_id: state.card.tg_id, reason: t.dataset.reason });
       tg.showAlert("Жалоба отправлена.");
     }
+  } else if (t.dataset.admtab) {
+    state.admTab = t.dataset.admtab; drawAdmin();
+  } else if (t.dataset.shotreport) {
+    tg.showConfirm("Пожаловаться на непристойный скрин? Его увидит администратор.", async (yes) => {
+      if (!yes) return;
+      await api("report", { task_id: Number(t.dataset.shotreport), reason: "nsfw" });
+      tg.showAlert("Жалоба отправлена.");
+    });
   } else if (t.dataset.adm) {
     await api("admin_set", { tg_id: Number(t.dataset.adm), [t.dataset.key]: t.dataset.val === "true" });
     renderAdmin();
@@ -402,21 +411,48 @@ const RULES = `<b>Профиль</b>
 <b>Жалобы</b>
 <p>Пожаловаться можно на ссылку со скамом, фейковые скрины или другое нарушение. После 3 жалоб от разных людей карточка скрывается до решения администратора. За нарушения он может заблокировать доступ.</p>`;
 
-const REASON = { scam: "скам-ссылка", fake: "фейковые скрины", other: "другое" };
+const REASON = { scam: "скам-ссылка", fake: "фейковые скрины", nsfw: "непристойный скрин", other: "другое" };
 
+// Админка: вкладки «Жалобы», «Скрытые», «Все» и поиск по имени.
 async function renderAdmin() {
   $app.innerHTML = `<div class="empty">Загрузка…</div>`;
   const { users } = await api("admin_list");
-  $app.innerHTML = (users ?? []).map((u) => `<div class="card item adm">
+  state.admUsers = users ?? [];
+  drawAdmin();
+}
+
+function drawAdmin() {
+  const tab = state.admTab ?? "reports";
+  const q = (state.admQuery ?? "").toLowerCase();
+  let list = state.admUsers;
+  if (tab === "reports") list = list.filter((u) => u.reports.length).sort((a, b) => b.reports.length - a.reports.length);
+  if (tab === "hidden") list = list.filter((u) => u.hidden || u.banned);
+  if (q) list = list.filter((u) => (u.name ?? "").toLowerCase().includes(q));
+  const count = (t) => t === "reports" ? state.admUsers.filter((u) => u.reports.length).length
+    : t === "hidden" ? state.admUsers.filter((u) => u.hidden || u.banned).length : state.admUsers.length;
+  const tabs = [["reports", "Жалобы"], ["hidden", "Скрытые"], ["all", "Все"]].map(([t, n]) =>
+    `<button class="chip ${t === tab ? "on" : ""}" data-admtab="${t}">${n} ${count(t)}</button>`).join("");
+  $app.innerHTML = `<div class="chips">${tabs}</div>
+    <input type="url" id="admq" placeholder="Поиск по имени" value="${esc(state.admQuery ?? "")}" style="margin-bottom:14px">
+    <div id="admlist"></div>`;
+  document.getElementById("admq").oninput = (e) => { state.admQuery = e.target.value; drawList(); };
+  const drawList = () => {
+    const qq = (state.admQuery ?? "").toLowerCase();
+    const l = qq ? list.filter((u) => (u.name ?? "").toLowerCase().includes(qq)) : list;
+    document.getElementById("admlist").innerHTML = l.map((u) => `<div class="card item adm">
       ${avatar(u)}<b>${esc(u.name ?? "Автор")}</b> · ${badge(u.rating)}
       ${u.banned ? " · ⛔ бан" : ""}${u.hidden ? " · 🙈 скрыт" : ""}${u.pinned ? " · 📌" : ""}
-      <div class="meta">Отклонённых скринов: ${u.rejected}. Жалоб: ${u.reports.length}${u.reports.length ? " (" + u.reports.map((r) => REASON[r]).join(", ") + ")" : ""}</div>
+      <div class="meta">Отклонённых скринов: ${u.rejected}. Жалоб: ${u.reports.length}</div>
+      ${u.reports.map((r) => `<div class="meta">⚠️ ${REASON[r.reason] ?? r.reason}, ${new Date(r.at).toLocaleDateString("ru-RU")}</div>
+        ${r.shot ? `<img class="shot" src="${esc(r.shot)}" alt="скрин из жалобы">` : ""}`).join("")}
       <div class="meta">${u.links.map(esc).join("<br>")}</div>
       <div class="row">
         <button class="btn ${u.banned ? "ghost" : "red"}" data-adm="${u.tg_id}" data-key="banned" data-val="${!u.banned}">${u.banned ? "Разбанить" : "Забанить"}</button>
         <button class="btn ghost" data-adm="${u.tg_id}" data-key="hidden" data-val="${!u.hidden}">${u.hidden ? "Вернуть в ленту" : "Скрыть"}</button>
         <button class="btn ghost" data-adm="${u.tg_id}" data-key="pinned" data-val="${!u.pinned}">${u.pinned ? "Открепить" : "Закрепить"}</button>
-      </div></div>`).join("") || `<div class="empty">Пока никого.</div>`;
+      </div></div>`).join("") || `<div class="empty">${tab === "reports" ? "Жалоб нет." : tab === "hidden" ? "Скрытых нет." : "Никого не найдено."}</div>`;
+  };
+  drawList();
 }
 
 function render() {

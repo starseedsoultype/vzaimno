@@ -113,7 +113,34 @@ async function card(u: any, field: Field) {
 const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
   async me(me) {
     const { data: unanswered } = await db.rpc("vz_unanswered", { uid: me.tg_id });
-    return { user: me, rating: await rating(me.tg_id), unanswered };
+    // Прогресс: сколько получено, сколько сделано сегодня, серия дней подряд.
+    const { data: got } = await db.from("vz_tasks").select("field").eq("to_id", me.tg_id).eq("status", "ok");
+    const { data: sent } = await db.from("vz_tasks").select("created_at").eq("from_id", me.tg_id).eq("status", "ok")
+      .gt("created_at", new Date(Date.now() - 400 * 24 * H).toISOString());
+    const day = (d: string | number) => new Date(d).toISOString().slice(0, 10);
+    const days = new Set((sent ?? []).map((t) => day(t.created_at)));
+    const today = day(Date.now());
+    let streak = 0;
+    for (let d = days.has(today) ? Date.now() : Date.now() - 24 * H; days.has(day(d)); d -= 24 * H) streak++;
+    // Новое с прошлого входа: для всплывашки «+1».
+    const since = me.last_seen_at ?? me.created_at;
+    const { data: fresh } = await db.from("vz_tasks").select("from_id, field, is_reply")
+      .eq("to_id", me.tg_id).eq("status", "ok").gt("created_at", since).order("created_at");
+    const events = [];
+    for (const t of fresh ?? []) {
+      const u = await getUser(t.from_id);
+      events.push({ name: u?.name ?? "Автор", field: t.field, is_reply: t.is_reply });
+    }
+    await db.from("vz_users").update({ last_seen_at: new Date().toISOString() }).eq("tg_id", me.tg_id);
+    return {
+      user: me, rating: await rating(me.tg_id), unanswered, events,
+      stats: {
+        stars: (got ?? []).filter((t) => t.field === "book").length,
+        subs: (got ?? []).filter((t) => t.field !== "book").length,
+        today: (sent ?? []).filter((t) => day(t.created_at) === today).length,
+        streak,
+      },
+    };
   },
 
   async avatar(me, b) {
@@ -194,23 +221,37 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     return { ok: true };
   },
 
+  // Жалоба на карточку (to_id) или на присланный мне скрин (task_id).
   async report(me, b) {
-    const reason = ["scam", "fake", "other"].includes(b.reason) ? b.reason : "other";
-    const to = Number(b.to_id);
-    if (to === me.tg_id) return { error: "self" };
-    await db.from("vz_reports").upsert({ from_id: me.tg_id, to_id: to, reason },
-      { onConflict: "from_id,to_id", ignoreDuplicates: true });
+    const reason = ["scam", "fake", "nsfw", "other"].includes(b.reason) ? b.reason : "other";
+    let to = Number(b.to_id);
+    let task_id: number | null = null;
+    if (b.task_id) {
+      const { data: t } = await db.from("vz_tasks").select("id, from_id").eq("id", b.task_id).eq("to_id", me.tg_id).maybeSingle();
+      if (!t) return { error: "task" };
+      to = t.from_id; task_id = t.id;
+    }
+    if (!to || to === me.tg_id) return { error: "self" };
+    const { data: dup } = await db.from("vz_reports").select("id").eq("from_id", me.tg_id).eq("to_id", to)
+      .filter("task_id", task_id ? "eq" : "is", task_id ?? null).maybeSingle();
+    if (!dup) await db.from("vz_reports").insert({ from_id: me.tg_id, to_id: to, reason, task_id });
     return { ok: true };
   },
 
   async admin_list(me) {
     if (!me.is_admin) return { error: "admin" };
     const { data: users } = await db.from("vz_users").select("*").order("created_at", { ascending: false });
-    const { data: reports } = await db.from("vz_reports").select("to_id, reason");
+    const { data: reports } = await db.from("vz_reports").select("to_id, reason, task_id, created_at");
+    const { data: shots } = await db.from("vz_tasks").select("id, shot_path")
+      .in("id", (reports ?? []).map((r) => r.task_id).filter(Boolean));
     const { data: rejected } = await db.from("vz_tasks").select("from_id").eq("status", "rejected");
     const list = [];
     for (const u of users ?? []) {
-      const rs = (reports ?? []).filter((r) => r.to_id === u.tg_id).map((r) => r.reason);
+      const rs = [];
+      for (const r of (reports ?? []).filter((r) => r.to_id === u.tg_id)) {
+        const path = (shots ?? []).find((t) => t.id === r.task_id)?.shot_path;
+        rs.push({ reason: r.reason, at: r.created_at, shot: path ? await signed(path) : null });
+      }
       list.push({
         tg_id: u.tg_id, name: u.name, photo: u.photo_custom ?? u.photo_url,
         rating: await rating(u.tg_id), banned: u.banned, hidden: u.hidden, pinned: u.is_pinned,

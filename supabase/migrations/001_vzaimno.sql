@@ -177,3 +177,11 @@ alter table public.vz_users add column if not exists insta text;
 alter table public.vz_tasks drop constraint if exists vz_tasks_field_check;
 alter table public.vz_tasks add constraint vz_tasks_field_check
   check (field in ('book', 'profile', 'tg', 'vk', 'boosty', 'tiktok', 'insta'));
+
+-- Когда человек последний раз открывал миниапп: для всплывашки «+1».
+alter table public.vz_users add column if not exists last_seen_at timestamptz;
+
+-- Жалоба на конкретный скрин (непристойный контент): админ видит сам скрин.
+alter table public.vz_reports add column if not exists task_id bigint references public.vz_tasks (id) on delete set null;
+alter table public.vz_reports drop constraint if exists vz_reports_from_id_to_id_key;
+create unique index if not exists vz_reports_uniq on public.vz_reports (from_id, to_id, task_id) nulls not distinct;
