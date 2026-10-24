@@ -82,6 +82,14 @@
   @keyframes bob { 50% { transform: translateY(-3px); } }
   @keyframes ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
   .switch { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 14px; }
+  #promo { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px;
+    background: rgba(0,0,0,.45); z-index: 20; }
+  #promo.show { display: flex; }
+  #promo .box { background: var(--bg); border-radius: 24px; padding: 28px 22px 20px; text-align: center; max-width: 360px;
+    animation: pop .4s ease-out; }
+  #promo .big { font-size: 64px; line-height: 1; animation: bob 1.6s ease-in-out infinite; }
+  #promo h2 { margin: 14px 0 8px; font-size: 21px; }
+  #promo p { margin: 0 0 18px; color: var(--hint); }
   @keyframes pop { from { transform: scale(0); } 70% { transform: scale(1.1); } to { transform: scale(1); } }
   @keyframes draw { to { stroke-dashoffset: 0; } }
 </style>
@@ -105,6 +113,13 @@
   </div>
 </div>
 <div id="toasts"></div>
+<div id="promo"><div class="box">
+  <div class="big">🚀</div>
+  <h2>Ваша карточка первой у всех</h2>
+  <p>Пригласите автора. Когда он сделает первый обмен, ваша карточка сутки будет показываться всем первой.</p>
+  <button class="btn" data-act="invite" style="width:100%">Пригласить автора</button>
+  <button class="btn ghost" data-act="promo-close" style="width:100%;margin-top:10px">Позже</button>
+</div></div>
 <div id="done"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/><path d="M28 52 L44 67 L73 36"/></svg></div>
 <input id="file" type="file" accept="image/*" hidden>
 <input id="ava" type="file" accept="image/*" hidden>
@@ -425,7 +440,10 @@ document.addEventListener("click", async (e) => {
     document.getElementById("ava").click();
   } else if (t.dataset.act === "shot") {
     document.getElementById("file").click();
+  } else if (t.dataset.act === "promo-close") {
+    document.getElementById("promo").classList.remove("show");
   } else if (t.dataset.act === "invite") {
+    document.getElementById("promo").classList.remove("show");
     const link = `https://t.me/${BOT}?startapp=ref_${state.me.user.tg_id}`;
     tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.")}`);
   } else if (t.dataset.reply || t.dataset.resend) {
@@ -519,6 +537,14 @@ function render() {
   state.me = me;
   document.getElementById("nav-admin").hidden = !me.user.is_admin;
   updateBadge(); showEvents(me.events);
+  // Раз в день при входе: предложение пригласить автора (только тем, кто уже заполнил профиль).
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    if (Object.keys(FIELDS).some((f) => me.user[f]) && localStorage.getItem("vz_promo") !== today) {
+      localStorage.setItem("vz_promo", today);
+      setTimeout(() => document.getElementById("promo").classList.add("show"), 1500);
+    }
+  } catch {}
   state.reels = (await api("reels")).reels ?? [];
   if (!Object.keys(FIELDS).some((f) => me.user[f])) {
     state.tab = "profile";
