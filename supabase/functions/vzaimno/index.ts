@@ -401,16 +401,34 @@ async function daily() {
 }
 
 // Разовая рассылка-инструкция: каждому один раз (флаг broadcast_sent), повторный вызов никого не дублирует.
+// test: только админам и без флага, чтобы посмотреть, как выглядит.
 const BROADCAST = `<b>Как пользоваться «Взаимно»</b>
-1. Профиль: вставьте свои ссылки и нажмите «Сохранить».
-2. Лента: откройте ссылку, поставьте звезду или подпишитесь, прикрепите скрин.
+1. На странице «Профиль»: вставьте ссылки на свои площадки (можно также на рилсы для продвижения) и нажмите «Сохранить».
+2. Лента: откройте ссылку, сделайте задание (звезда, подписка или поддержка рилса) и прикрепите скрин.
 3. Входящие: ответьте тем, кто помог вам.
-Чем больше вы помогаете, тем выше ваша карточка.`;
-async function broadcast() {
-  const { data: users } = await db.from("vz_users").select("tg_id").eq("banned", false).eq("broadcast_sent", false);
+Чем больше вы помогаете, тем выше ваша карточка.
+Приглашайте тех, кому это тоже будет взаимовыгодно, ведь это выгодно всем! Кнопка «Пригласить автора» в профиле.`;
+const SHARE = "Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.";
+const inviteUrl = (id: number) =>
+  `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/vzaimnosub_bot?startapp=ref_${id}`)}&text=${encodeURIComponent(SHARE)}`;
+async function broadcast(test: boolean) {
+  // Настоящая отправка разблокируется только строкой broadcast_allowed в vz_runs (ставится после «да» Олеси).
+  if (!test) {
+    const { data: ok } = await db.from("vz_runs").select("name").eq("name", "broadcast_allowed").maybeSingle();
+    if (!ok) return -1;
+  }
+  let q = db.from("vz_users").select("tg_id").eq("banned", false);
+  q = test ? q.eq("is_admin", true) : q.eq("broadcast_sent", false);
+  const { data: users } = await q;
   for (const u of users ?? []) {
-    await send(u.tg_id, BROADCAST);
-    await db.from("vz_users").update({ broadcast_sent: true }).eq("tg_id", u.tg_id);
+    await tg("sendMessage", {
+      chat_id: u.tg_id, text: BROADCAST, parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [
+        [{ text: "Открыть Взаимно", web_app: { url: WEBAPP_URL } }],
+        [{ text: "Пригласить автора", url: inviteUrl(u.tg_id) }],
+      ] },
+    });
+    if (!test) await db.from("vz_users").update({ broadcast_sent: true }).eq("tg_id", u.tg_id);
   }
   return (users ?? []).length;
 }
@@ -464,7 +482,7 @@ Deno.serve(async (req) => {
     if (ok) await (job === "daily" ? daily() : digest());
     return new Response("ok");
   }
-  if (url.searchParams.has("broadcast")) { return json({ sent: await broadcast() }); }
+  if (url.searchParams.has("broadcast")) { return json({ sent: await broadcast(url.searchParams.get("broadcast") === "test") }); }
   if (url.searchParams.has("setup")) {
     const hook = await tg("setWebhook", {
       url: `https://${url.host}/functions/v1/vzaimno`, secret_token: await SECRET, allowed_updates: ["message"],
