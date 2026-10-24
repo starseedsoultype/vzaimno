@@ -365,7 +365,10 @@ async function onBotUpdate(update: any) {
   await tg("sendMessage", {
     chat_id: msg.chat.id,
     text: "Взаимно: обмен оценками и подписками между авторами. Каждый обмен подтверждается скрином.",
-    reply_markup: { inline_keyboard: [[{ text: "Открыть Взаимно", web_app: { url } }]] },
+    reply_markup: { inline_keyboard: [
+      [{ text: "Открыть Взаимно", web_app: { url } }],
+      [{ text: "📣 Канал проекта", url: "https://t.me/pro_vzaimno" }],
+    ] },
   });
 }
 
