@@ -294,7 +294,7 @@ function renderProfile() {
     `<label>${d.name}</label><input type="url" name="${f}" value="${esc(u[f] ?? "")}" placeholder="${d.hint}">`).join("");
   $app.innerHTML = `<div class="me"><button class="ava-btn" data-act="ava">${avatar({ name: u.name, photo: u.photo_custom ?? u.photo_url })}</button>
     <div class="paste" style="margin:0 0 8px">Нажмите на фото, чтобы поменять</div><h2>${esc(u.name ?? "")}</h2><div class="rating">${badge(state.me.rating)}</div></div>
-    ${Object.keys(FIELDS).some((f) => u[f]) ? "" : `<div class="tip">Вставьте ссылку на свою книгу или страницу и нажмите «Сохранить»</div>`}
+    ${Object.keys(FIELDS).some((f) => u[f]) ? "" : `<div class="tip">Вставьте ссылки на свои площадки и нажмите «Сохранить»</div>`}
     <form id="pf">${inputs}
       <div class="row"><button class="btn ${Object.keys(FIELDS).some((f) => u[f]) ? "" : "pulse"}" type="submit">Сохранить</button></div>
     </form>
