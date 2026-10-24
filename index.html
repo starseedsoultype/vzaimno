@@ -75,6 +75,13 @@
   .toast { background: var(--accent); color: var(--accent-text); padding: 12px 14px; border-radius: 14px; font-weight: 600;
     box-shadow: 0 6px 18px rgba(0,0,0,.2); animation: toast 3.2s ease forwards; }
   @keyframes toast { 0% { opacity: 0; transform: translateY(-16px); } 10%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-16px); } }
+  .tip { position: relative; background: var(--accent); color: var(--accent-text); border-radius: 12px; padding: 10px 12px;
+    margin: 12px 0 10px; font-weight: 600; font-size: 14px; text-align: left; animation: bob 1.6s ease-in-out infinite; }
+  .tip::after { content: ""; position: absolute; left: 24px; bottom: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: var(--accent); }
+  .pulse { animation: ring 1.4s ease-out infinite; }
+  @keyframes bob { 50% { transform: translateY(-3px); } }
+  @keyframes ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
+  .switch { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 14px; }
   @keyframes pop { from { transform: scale(0); } 70% { transform: scale(1.1); } to { transform: scale(1); } }
   @keyframes draw { to { stroke-dashoffset: 0; } }
 </style>
@@ -239,6 +246,14 @@ async function renderFeed() {
     <div class="row"><button class="btn ghost" data-act="chat">Уже обменялись в чате</button></div>
     <button class="report" data-act="report">Пожаловаться</button>`;
   state.upload = { field: card.field, to_id: card.tg_id, reply: false, reel_id: card.reel_id };
+  // Обучение на живой карточке: пока человек не сделал ни одного обмена.
+  if (!state.me.stats?.given) {
+    const link = slot.querySelector(".link");
+    link.classList.add("pulse");
+    link.insertAdjacentHTML("beforebegin", `<div class="tip">1. Нажмите на ссылку и сделайте задание</div>`);
+    slot.querySelector('[data-act="shot"]').closest(".row")
+      .insertAdjacentHTML("beforebegin", `<div class="tip">2. Вернитесь сюда и прикрепите скрин</div>`);
+  }
 }
 
 // ---------- Входящие ----------
@@ -267,6 +282,9 @@ async function renderInbox() {
       ${it.shot ? `<button class="report" data-shotreport="${it.id}">Пожаловаться на скрин</button>` : ""}</div>`;
   }).join("");
   state.items = Object.fromEntries(items.map((it) => [it.id, it]));
+  if ((state.me.stats?.given ?? 0) < 3 && items.some((it) => it.kind === "reply")) {
+    $app.insertAdjacentHTML("afterbegin", `<div class="tip">Здесь те, кто помог вам. Ответьте им: «📎 Ответить скрином»</div>`);
+  }
 }
 
 // ---------- Профиль ----------
@@ -276,9 +294,11 @@ function renderProfile() {
     `<label>${d.name}</label><input type="url" name="${f}" value="${esc(u[f] ?? "")}" placeholder="${d.hint}">`).join("");
   $app.innerHTML = `<div class="me"><button class="ava-btn" data-act="ava">${avatar({ name: u.name, photo: u.photo_custom ?? u.photo_url })}</button>
     <div class="paste" style="margin:0 0 8px">Нажмите на фото, чтобы поменять</div><h2>${esc(u.name ?? "")}</h2><div class="rating">${badge(state.me.rating)}</div></div>
+    ${Object.keys(FIELDS).some((f) => u[f]) ? "" : `<div class="tip">Вставьте ссылку на свою книгу или страницу и нажмите «Сохранить»</div>`}
     <form id="pf">${inputs}
-      <div class="row"><button class="btn" type="submit">Сохранить</button></div>
+      <div class="row"><button class="btn ${Object.keys(FIELDS).some((f) => u[f]) ? "" : "pulse"}" type="submit">Сохранить</button></div>
     </form>
+    <label class="switch"><input type="checkbox" id="digest" ${u.digest_off ? "" : "checked"}> Присылать сводку раз в день</label>
     <label>Мои рилсы (живут 48 часов, до 2 одновременно)</label>
     ${(state.reels ?? []).map((r) => `<div class="safe" style="word-break:break-all">🎬 ${esc(r.url)} · ещё ${Math.max(1, Math.ceil(48 - (Date.now() - new Date(r.created_at)) / 3600000))} ч</div>`).join("")}
     <input type="url" id="reelurl" placeholder="https://www.instagram.com/reel/...">
@@ -289,6 +309,7 @@ function renderProfile() {
     <div class="safe" style="text-align:center">Все поля по желанию. Принимаются только ссылки litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com.</div>`;
   document.getElementById("pf").onsubmit = async (e) => {
     e.preventDefault();
+    const wasFilled = Object.keys(FIELDS).some((f) => state.me.user[f]);
     const data = {}; let ok = true;
     for (const inp of e.target.querySelectorAll("input")) {
       const v = inp.value.trim();
@@ -302,7 +323,18 @@ function renderProfile() {
     if (r.error) { tg.showAlert("Ссылка не прошла проверку: " + FIELDS[r.error].name); return; }
     Object.assign(state.me.user, Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v || null])));
     tg.HapticFeedback?.notificationOccurred("success");
+    // Первое сохранение: сразу ведём в ленту делать первый обмен.
+    if (!wasFilled && Object.keys(FIELDS).some((f) => state.me.user[f])) {
+      state.tab = "feed";
+      document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === "feed"));
+      render();
+      return;
+    }
     tg.showAlert("Сохранено.");
+  };
+  document.getElementById("digest").onchange = (e) => {
+    state.me.user.digest_off = !e.target.checked;
+    api("set_digest", { off: !e.target.checked });
   };
 }
 

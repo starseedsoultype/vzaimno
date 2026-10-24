@@ -236,3 +236,24 @@ language sql stable set search_path = public as $$
   limit lim
 $$;
 revoke execute on function public.vz_reel_feed(bigint, int) from public, anon, authenticated;
+
+-- Ежедневная сводка каждому в 10:00 по Москве (07:00 UTC); можно отключить в профиле.
+alter table public.vz_users add column if not exists digest_off boolean not null default false;
+select cron.schedule('vzaimno-digest', '0 7 * * *',
+  $$select net.http_post(url := 'https://ogqtywdsplyqwfznqxnu.supabase.co/functions/v1/vzaimno?digest=1', body := '{}'::jsonb)$$);
+
+-- Разовая рассылка-инструкция: кому уже отправлена.
+alter table public.vz_users add column if not exists broadcast_sent boolean not null default false;
+
+-- Сводки (daily, digest) не чаще раза в 20 часов, даже если адрес вызовут вручную.
+create table if not exists public.vz_runs (name text primary key, at timestamptz not null);
+alter table public.vz_runs enable row level security;
+create or replace function public.vz_claim_run(job text) returns boolean
+language sql volatile set search_path = public as $$
+  with up as (
+    insert into public.vz_runs (name, at) values (job, now())
+    on conflict (name) do update set at = now() where public.vz_runs.at < now() - interval '20 hours'
+    returning 1
+  ) select exists (select 1 from up)
+$$;
+revoke execute on function public.vz_claim_run(text) from public, anon, authenticated;

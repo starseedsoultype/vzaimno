@@ -155,6 +155,7 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
         stars: (got ?? []).filter((t) => t.field === "book").length,
         subs: (got ?? []).filter((t) => t.field !== "book").length,
         today: (sent ?? []).filter((t) => day(t.created_at) === today).length,
+        given: (sent ?? []).length,
         streak,
       },
     };
@@ -177,6 +178,11 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
       patch[f] = v || null;
     }
     await db.from("vz_users").update(patch).eq("tg_id", me.tg_id);
+    return { ok: true };
+  },
+
+  async set_digest(me, b) {
+    await db.from("vz_users").update({ digest_off: !!b.off }).eq("tg_id", me.tg_id);
     return { ok: true };
   },
 
@@ -394,13 +400,71 @@ async function daily() {
   }
 }
 
+// Разовая рассылка-инструкция: каждому один раз (флаг broadcast_sent), повторный вызов никого не дублирует.
+const BROADCAST = `<b>Как пользоваться «Взаимно»</b>
+1. Профиль: вставьте свои ссылки и нажмите «Сохранить».
+2. Лента: откройте ссылку, поставьте звезду или подпишитесь, прикрепите скрин.
+3. Входящие: ответьте тем, кто помог вам.
+Чем больше вы помогаете, тем выше ваша карточка.`;
+async function broadcast() {
+  const { data: users } = await db.from("vz_users").select("tg_id").eq("banned", false).eq("broadcast_sent", false);
+  for (const u of users ?? []) {
+    await send(u.tg_id, BROADCAST);
+    await db.from("vz_users").update({ broadcast_sent: true }).eq("tg_id", u.tg_id);
+  }
+  return (users ?? []).length;
+}
+
+const pl = (n: number, one: string, few: string, many: string) =>
+  n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many;
+const dayOf = (d: string | number) => new Date(d).toISOString().slice(0, 10);
+
+// Раз в день каждому: что нового. Строки без новостей не показываем, нет новостей совсем — не пишем.
+async function digest() {
+  const since = new Date(Date.now() - 24 * H).toISOString();
+  const { data: users } = await db.from("vz_users").select("*").eq("banned", false).eq("digest_off", false);
+  const fresh = (users ?? []).filter((u) => u.created_at > since);
+  for (const u of users ?? []) {
+    const lines: string[] = [];
+    const n = fresh.filter((f) => f.tg_id !== u.tg_id).length;
+    if (n) lines.push(`🌱 За сутки во «Взаимно» ${pl(n, "пришёл", "пришли", "пришли")} ${n} ${pl(n, "новый автор", "новых автора", "новых авторов")}.`);
+    const cards = fresh.filter((f) => f.tg_id !== u.tg_id && !f.hidden && FIELDS.some((k) => u[k] && f[k])).length;
+    if (cards) lines.push(`В вашей ленте ${cards} ${pl(cards, "новая карточка", "новые карточки", "новых карточек")}.`);
+    const { data: got } = await db.from("vz_tasks").select("field").eq("to_id", u.tg_id).eq("status", "ok").gt("created_at", since);
+    const stars = (got ?? []).filter((t) => t.field === "book").length;
+    const subs = (got ?? []).length - stars;
+    const parts = [];
+    if (stars) parts.push(`${stars} ${pl(stars, "звезду", "звезды", "звёзд")}`);
+    if (subs) parts.push(`${subs} ${pl(subs, "подписку", "подписки", "подписок")}`);
+    if (parts.length) lines.push(`⭐ Вчера вам поставили ${parts.join(" и ")}.`);
+    const { data: wait } = await db.rpc("vz_unanswered", { uid: u.tg_id });
+    if (wait) lines.push(`⏳ Вас ${wait === 1 ? "ждёт" : "ждут"} ${wait} ${pl(wait, "ответ", "ответа", "ответов")} взаимностью.`);
+    const { data: sent } = await db.from("vz_tasks").select("created_at").eq("from_id", u.tg_id).eq("status", "ok")
+      .gt("created_at", new Date(Date.now() - 400 * 24 * H).toISOString());
+    const days = new Set((sent ?? []).map((t) => dayOf(t.created_at)));
+    let streak = 0;
+    for (let d = Date.now() - 24 * H; days.has(dayOf(d)); d -= 24 * H) streak++;
+    if (streak && !days.has(dayOf(Date.now()))) {
+      lines.push(`🔥 Серия ${streak} ${pl(streak, "день", "дня", "дней")}: сделайте обмен сегодня, чтобы её не потерять.`);
+    }
+    if (lines.length) await send(u.tg_id, lines.join("\n"));
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   const url = new URL(req.url);
 
-  // cron и setup безопасно вызывать повторно: они ничего не раскрывают.
+  // cron, setup и broadcast безопасно вызывать повторно: они ничего не раскрывают и не дублируют.
   if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
-  if (url.searchParams.has("daily")) { await daily(); return new Response("ok"); }
+  // Сводки защищены от повторного вызова: не чаще раза в 20 часов.
+  for (const job of ["daily", "digest"]) {
+    if (!url.searchParams.has(job)) continue;
+    const { data: ok } = await db.rpc("vz_claim_run", { job });
+    if (ok) await (job === "daily" ? daily() : digest());
+    return new Response("ok");
+  }
+  if (url.searchParams.has("broadcast")) { return json({ sent: await broadcast() }); }
   if (url.searchParams.has("setup")) {
     const hook = await tg("setWebhook", {
       url: `https://${url.host}/functions/v1/vzaimno`, secret_token: await SECRET, allowed_updates: ["message"],
