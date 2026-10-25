@@ -237,7 +237,7 @@ const skipField = (c) => (c.field === "reel" ? `reel:${c.reel_id}` : c.field);
 async function renderFeed() {
   const mine = Object.keys(FIELDS).filter((f) => state.me.user[f]).concat(state.reels?.length ? ["reel"] : []);
   if (!mine.length) {
-    $app.innerHTML = `<div class="empty">Заполните хотя бы одно поле в профиле, и здесь появятся карточки авторов с тем же полем.</div>`;
+    $app.innerHTML = `<div class="empty">Лента откроется после того, как вы заполните профиль: вставьте ссылки на свои площадки. Тогда здесь появятся авторы с теми же площадками.<div class="row"><button class="btn" data-tab-go="profile">Заполнить профиль</button></div></div>`;
     return;
   }
   $app.innerHTML = progressHtml() + `<div id="slot" class="empty">Загрузка…</div>`;
@@ -309,7 +309,7 @@ function renderProfile() {
     `<label>${d.name}</label><input type="url" name="${f}" value="${esc(u[f] ?? "")}" placeholder="${d.hint}">`).join("");
   $app.innerHTML = `<div class="me"><button class="ava-btn" data-act="ava">${avatar({ name: u.name, photo: u.photo_custom ?? u.photo_url })}</button>
     <div class="paste" style="margin:0 0 8px">Нажмите на фото, чтобы поменять</div><h2>${esc(u.name ?? "")}</h2><div class="rating">${badge(state.me.rating)}</div></div>
-    ${Object.keys(FIELDS).some((f) => u[f]) ? "" : `<div class="tip">Вставьте ссылки на свои площадки и нажмите «Сохранить»</div>`}
+    ${Object.keys(FIELDS).some((f) => u[f]) ? "" : `<div class="tip">Сначала заполните профиль: вставьте ссылки на свои площадки и нажмите «Сохранить». После этого откроется лента с другими авторами</div>`}
     <form id="pf">${inputs}
       <div class="row"><button class="btn ${Object.keys(FIELDS).some((f) => u[f]) ? "" : "pulse"}" type="submit">Сохранить</button></div>
     </form>
@@ -440,12 +440,16 @@ document.addEventListener("click", async (e) => {
     document.getElementById("ava").click();
   } else if (t.dataset.act === "shot") {
     document.getElementById("file").click();
+  } else if (t.dataset.tabGo) {
+    state.tab = t.dataset.tabGo;
+    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === state.tab));
+    render();
   } else if (t.dataset.act === "promo-close") {
     document.getElementById("promo").classList.remove("show");
   } else if (t.dataset.act === "invite") {
     document.getElementById("promo").classList.remove("show");
     const link = `https://t.me/${BOT}?startapp=ref_${state.me.user.tg_id}`;
-    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.")}`);
+    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше. Канал проекта: @pro_vzaimno")}`);
   } else if (t.dataset.reply || t.dataset.resend) {
     const it = state.items[t.dataset.reply || t.dataset.resend];
     state.upload = { field: it.card.field, to_id: it.card.tg_id, reply: !!t.dataset.reply || it.is_reply, reel_id: it.card.reel_id };

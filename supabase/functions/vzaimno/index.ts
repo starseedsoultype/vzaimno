@@ -390,6 +390,17 @@ async function cron() {
     await send(t.from_id, `${h(to?.name ?? "Автор")} пока не ответил(а) вам взаимностью (${LABEL[t.field as Field]}).`);
     await db.from("vz_tasks").update({ notified_at: new Date().toISOString() }).eq("id", t.id);
   }
+  // За 2 часа до конца 48 часов: итог по рилсу и предложение выложить новый.
+  const { data: ending } = await db.from("vz_reels").select("*").eq("retired", false).eq("reminded", false)
+    .lt("created_at", new Date(now - (REEL_TTL - 2 * H)).toISOString())
+    .gt("created_at", new Date(now - REEL_TTL).toISOString()).limit(100);
+  for (const r of ending ?? []) {
+    const { count } = await db.from("vz_tasks").select("id", { count: "exact", head: true }).eq("reel_id", r.id).eq("status", "ok");
+    const n = count ?? 0;
+    const got = n ? `собрал ${n} ${pl(n, "поддержку", "поддержки", "поддержек")}. Через` : "через";
+    await send(r.user_id, `🎬 Ваш рилс ${got} 2 часа уйдёт из ленты. Выложите новый, чтобы поддержка не прерывалась.`);
+    await db.from("vz_reels").update({ reminded: true }).eq("id", r.id);
+  }
 }
 
 // Раз в день админам: сколько новых пользователей за сутки.
@@ -411,7 +422,7 @@ const BROADCAST = `<b>Как пользоваться «Взаимно»</b>
 3. Входящие: ответьте тем, кто помог вам.
 Чем больше вы помогаете, тем выше ваша карточка.
 Приглашайте тех, кому это тоже будет взаимовыгодно, ведь это выгодно всем! Кнопка «Пригласить автора» в профиле.`;
-const SHARE = "Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.";
+const SHARE = "Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @alexaai111). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше. Канал проекта: @pro_vzaimno";
 const inviteUrl = (id: number) =>
   `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/vzaimnosub_bot?startapp=ref_${id}`)}&text=${encodeURIComponent(SHARE)}`;
 async function broadcast(test: boolean) {
@@ -467,6 +478,9 @@ async function digest() {
     for (let d = Date.now() - 24 * H; days.has(dayOf(d)); d -= 24 * H) streak++;
     if (streak && !days.has(dayOf(Date.now()))) {
       lines.push(`🔥 Серия ${streak} ${pl(streak, "день", "дня", "дней")}: сделайте обмен сегодня, чтобы её не потерять.`);
+    }
+    if ((u.insta || u.tiktok) && !(await activeReels(u.tg_id)).length) {
+      lines.push("🎬 У вас нет активного рилса. Добавьте свежий, и его поддержат.");
     }
     if (lines.length) await send(u.tg_id, lines.join("\n"));
   }

@@ -257,3 +257,6 @@ language sql volatile set search_path = public as $$
   ) select exists (select 1 from up)
 $$;
 revoke execute on function public.vz_claim_run(text) from public, anon, authenticated;
+
+-- Напоминание за 2 часа до конца жизни рилса отправлено.
+alter table public.vz_reels add column if not exists reminded boolean not null default false;
