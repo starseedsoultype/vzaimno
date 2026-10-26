@@ -239,11 +239,21 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     const path = `${me.tg_id}/${field}-${to.tg_id}-${reply ? "r" : "o"}-${Date.now()}.jpg`;
     await db.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg" });
     const now = new Date().toISOString();
+    // Встречное задание: он уже сделал меня из ленты, а я его. Это и есть взаимность, второй скрин не нужен.
+    let mutual = false;
+    if (!reply) {
+      let q = db.from("vz_tasks").update({ answered_at: now })
+        .eq("field", field).eq("from_id", to.tg_id).eq("to_id", me.tg_id)
+        .eq("is_reply", false).eq("status", "ok").is("answered_at", null);
+      if (field === "reel") q = q.eq("back_reel_id", reel_id);
+      const { data: opp } = await q.select("id");
+      mutual = !!opp?.length;
+    }
     // Первый обмен приглашённого: триггер в базе поднимает пригласившего на сутки.
     const bonusFor = me.invited_by && !me.ref_bonus_given ? me.invited_by : null;
     await db.from("vz_tasks").upsert({
       field, from_id: me.tg_id, to_id: to.tg_id, is_reply: reply, shot_path: path, status: "ok",
-      created_at: now, answered_at: null, reminded_at: null, notified_at: null, reel_id, back_reel_id,
+      created_at: now, answered_at: mutual ? now : null, reminded_at: null, notified_at: null, reel_id, back_reel_id,
     }, { onConflict: "field,from_id,to_id,is_reply,reel_id" });
     if (reply) {
       let q = db.from("vz_tasks").update({ answered_at: now })
@@ -252,8 +262,8 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
       await q;
     }
     const name = me.name ?? "Автор";
-    const caption = reply
-      ? `${name} ответил(а) вам взаимностью: ${LABEL[field]}.`
+    const caption = reply || mutual
+      ?`${name} ответил(а) вам взаимностью: ${LABEL[field]}.`
       : `${name} выполнил(а) задание: ${LABEL[field]}. Ответьте взаимностью во «Взаимно».`;
     await sendPhoto(to.tg_id, bytes, caption);
     if (bonusFor) {
