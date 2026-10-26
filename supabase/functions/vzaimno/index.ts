@@ -500,6 +500,23 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   const url = new URL(req.url);
 
+  // Альбом в канал: multipart с файлами p0..pN и подписью caption (HTML). Только по ключу VZ_POST_KEY.
+  if (url.searchParams.has("channel_post")) {
+    const key = Deno.env.get("VZ_POST_KEY");
+    if (!key || req.headers.get("x-post-key") !== key) return new Response("forbidden", { status: 403 });
+    const form = await req.formData();
+    const out = new FormData();
+    const media = [];
+    for (const [name, file] of form.entries()) {
+      if (!(file instanceof File)) continue;
+      out.append(name, file);
+      media.push({ type: "photo", media: `attach://${name}`, ...(media.length ? {} : { caption: form.get("caption"), parse_mode: "HTML" }) });
+    }
+    out.append("chat_id", "@pro_vzaimno");
+    out.append("media", JSON.stringify(media));
+    const r = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMediaGroup`, { method: "POST", body: out });
+    return json({ ok: r.ok, status: r.status });
+  }
   // cron, setup и broadcast безопасно вызывать повторно: они ничего не раскрывают и не дублируют.
   if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
   // Сводки защищены от повторного вызова: не чаще раза в 20 часов.
