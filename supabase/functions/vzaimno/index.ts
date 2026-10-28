@@ -517,6 +517,50 @@ Deno.serve(async (req) => {
     const r = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMediaGroup`, { method: "POST", body: out });
     return json({ ok: r.ok, status: r.status });
   }
+  // Анимация с подписью всем пользователям (test: только админам). Ключ VZ_POST_KEY; job защищает от повтора 20 часов.
+  if (url.searchParams.has("broadcast_media")) {
+    const key = Deno.env.get("VZ_POST_KEY");
+    if (!key || req.headers.get("x-post-key") !== key) return new Response("forbidden", { status: 403 });
+    // probe: молча спрашиваем Telegram, можно ли писать каждому (sendChatAction), и считаем причины отказа.
+    if (url.searchParams.get("broadcast_media") === "probe") {
+      const { data: all } = await db.from("vz_users").select("tg_id").eq("banned", false);
+      const why: Record<string, number> = {};
+      for (const u of all ?? []) {
+        const r = await (await fetch(`https://api.telegram.org/bot${TOKEN}/sendChatAction`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: u.tg_id, action: "typing" }),
+        })).json();
+        const k = r.ok ? "ok" : r.description;
+        why[k] = (why[k] ?? 0) + 1;
+      }
+      return json(why);
+    }
+    const test = url.searchParams.get("broadcast_media") === "test";
+    const job = url.searchParams.get("job");
+    if (!test) {
+      if (!job) return json({ error: "job" });
+      const { data: ok } = await db.rpc("vz_claim_run", { job });
+      if (!ok) return json({ error: "already_sent" });
+    }
+    const form = await req.formData();
+    const caption = String(form.get("caption"));
+    const markup = JSON.stringify({ inline_keyboard: [[{ text: "Открыть Взаимно", web_app: { url: WEBAPP_URL } }]] });
+    let q = db.from("vz_users").select("tg_id").eq("banned", false);
+    if (test) q = q.eq("is_admin", true);
+    const { data: users } = await q;
+    let fileId: string | null = null, sent = 0;
+    for (const u of users ?? []) {
+      // Первый раз грузим файл, дальше шлём по file_id.
+      const body = new FormData();
+      body.append("chat_id", String(u.tg_id));
+      body.append("caption", caption);
+      body.append("parse_mode", "HTML");
+      body.append("reply_markup", markup);
+      body.append("animation", fileId ?? (form.get("video") as File));
+      const r = await (await fetch(`https://api.telegram.org/bot${TOKEN}/sendAnimation`, { method: "POST", body })).json();
+      if (r.ok) { sent++; fileId ??= r.result.animation?.file_id ?? r.result.document?.file_id ?? null; }
+    }
+    return json({ sent, of: (users ?? []).length });
+  }
   // cron, setup и broadcast безопасно вызывать повторно: они ничего не раскрывают и не дублируют.
   if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
   // Сводки защищены от повторного вызова: не чаще раза в 20 часов.
