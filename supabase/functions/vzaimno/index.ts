@@ -525,14 +525,16 @@ Deno.serve(async (req) => {
     if (url.searchParams.get("broadcast_media") === "probe") {
       const { data: all } = await db.from("vz_users").select("tg_id").eq("banned", false);
       const why: Record<string, number> = {};
+      const ids: number[] = [];
       for (const u of all ?? []) {
         const r = await (await fetch(`https://api.telegram.org/bot${TOKEN}/sendChatAction`, {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: u.tg_id, action: "typing" }),
         })).json();
         const k = r.ok ? "ok" : r.description;
         why[k] = (why[k] ?? 0) + 1;
+        if (!r.ok) ids.push(u.tg_id);
       }
-      return json(why);
+      return json({ why, ids });
     }
     const test = url.searchParams.get("broadcast_media") === "test";
     const job = url.searchParams.get("job");
