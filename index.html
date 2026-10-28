@@ -512,6 +512,9 @@ function drawAdmin() {
     const l = qq ? list.filter((u) => (u.name ?? "").toLowerCase().includes(qq)) : list;
     document.getElementById("admlist").innerHTML = l.map((u) => `<div class="card item adm">
       ${avatar(u)}<b>${esc(u.name ?? "Автор")}</b> · ${badge(u.rating)}
+      <div class="meta">${u.username
+        ? `<a href="#" onclick="tg.openTelegramLink('https://t.me/${esc(u.username)}');return false">✉️ @${esc(u.username)}</a>`
+        : `<a href="tg://user?id=${u.tg_id}">✉️ написать (без юзернейма)</a>`}</div>
       ${u.banned ? " · ⛔ бан" : ""}${u.hidden ? " · 🙈 скрыт" : ""}${u.pinned ? " · 📌" : ""}
       <div class="meta">Отклонённых скринов: ${u.rejected}. Жалоб: ${u.reports.length}</div>
       ${u.reports.map((r) => `<div class="meta">⚠️ ${REASON[r.reason] ?? r.reason}, ${new Date(r.at).toLocaleDateString("ru-RU")}</div>

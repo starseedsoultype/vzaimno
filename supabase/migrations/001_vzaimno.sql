@@ -260,3 +260,6 @@ revoke execute on function public.vz_claim_run(text) from public, anon, authenti
 
 -- Напоминание за 2 часа до конца жизни рилса отправлено.
 alter table public.vz_reels add column if not exists reminded boolean not null default false;
+
+-- 28.10: @username из Telegram, чтобы админ мог написать человеку в личку.
+alter table public.vz_users add column if not exists username text;

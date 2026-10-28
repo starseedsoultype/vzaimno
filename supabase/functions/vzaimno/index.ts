@@ -1,4 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const TOKEN = Deno.env.get("VZ_BOT_TOKEN")!;
 const WEBAPP_URL = "https://starseedsoultype.github.io/vzaimno/";
@@ -319,7 +319,7 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
         rs.push({ reason: r.reason, at: r.created_at, shot: path ? await signed(path) : null });
       }
       list.push({
-        tg_id: u.tg_id, name: u.name, photo: u.photo_custom ?? u.photo_url,
+        tg_id: u.tg_id, name: u.name, username: u.username, photo: u.photo_custom ?? u.photo_url,
         rating: await rating(u.tg_id), banned: u.banned, hidden: u.hidden, pinned: u.is_pinned,
         rejected: (rejected ?? []).filter((t) => t.from_id === u.tg_id).length, reports: rs,
         links: FIELDS.map((f) => u[f]).filter(Boolean),
@@ -543,13 +543,16 @@ Deno.serve(async (req) => {
       const { data: ok } = await db.rpc("vz_claim_run", { job });
       if (!ok) return json({ error: "already_sent" });
     }
-    const form = await req.formData();
-    const caption = String(form.get("caption"));
+    // multipart (caption + video) или JSON {caption, animation: file_id} — второй вариант для отложенной отправки из pg_cron.
+    const isJson = req.headers.get("content-type")?.includes("json");
+    const form = isJson ? null : await req.formData();
+    const data = isJson ? await req.json() : null;
+    const caption = String(isJson ? data.caption : form!.get("caption"));
     const markup = JSON.stringify({ inline_keyboard: [[{ text: "Открыть Взаимно", web_app: { url: WEBAPP_URL } }]] });
     let q = db.from("vz_users").select("tg_id").eq("banned", false);
     if (test) q = q.eq("is_admin", true);
     const { data: users } = await q;
-    let fileId: string | null = null, sent = 0;
+    let fileId: string | null = isJson ? String(data.animation) : null, sent = 0;
     for (const u of users ?? []) {
       // Первый раз грузим файл, дальше шлём по file_id.
       const body = new FormData();
@@ -557,11 +560,11 @@ Deno.serve(async (req) => {
       body.append("caption", caption);
       body.append("parse_mode", "HTML");
       body.append("reply_markup", markup);
-      body.append("animation", fileId ?? (form.get("video") as File));
+      body.append("animation", fileId ?? (form!.get("video") as File));
       const r = await (await fetch(`https://api.telegram.org/bot${TOKEN}/sendAnimation`, { method: "POST", body })).json();
       if (r.ok) { sent++; fileId ??= r.result.animation?.file_id ?? r.result.document?.file_id ?? null; }
     }
-    return json({ sent, of: (users ?? []).length });
+    return json({ sent, of: (users ?? []).length, file_id: fileId });
   }
   // cron, setup и broadcast безопасно вызывать повторно: они ничего не раскрывают и не дублируют.
   if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
@@ -597,8 +600,8 @@ Deno.serve(async (req) => {
     const ref = /^\d+$/.test(refRaw) && Number(refRaw) !== auth.user.id ? Number(refRaw) : null;
     await db.from("vz_users").insert({ tg_id: auth.user.id, invited_by: ref });
   }
-  // Имя и фото берём из Telegram при каждом входе, чтобы они были свежими.
-  await db.from("vz_users").update({ name: auth.user.first_name ?? null, photo_url: auth.user.photo_url ?? null })
+  // Имя, фото и @username берём из Telegram при каждом входе, чтобы они были свежими.
+  await db.from("vz_users").update({ name: auth.user.first_name ?? null, photo_url: auth.user.photo_url ?? null, username: auth.user.username ?? null })
     .eq("tg_id", auth.user.id);
   me = await getUser(auth.user.id);
   if (me.banned) return json({ error: "banned" }, 403);
