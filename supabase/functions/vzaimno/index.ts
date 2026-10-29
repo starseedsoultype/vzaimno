@@ -19,6 +19,20 @@ const DESCRIPTION = `Взаимно помогает авторам и блог�
 
 Открывается прямо в Telegram, ничего устанавливать не нужно 📚`;
 const ABOUT = "Обмен оценками и подписками для авторов и блогеров. Карточки в ленте, подтверждение скрином, рейтинг взаимности.";
+const DESCRIPTION_EN = `Vzaimno is a reel swap for creators: you support someone's reel, they support yours.
+
+Works with Instagram Reels, TikTok, YouTube Shorts and VK Clips, plus follows on Telegram, Instagram, TikTok and more.
+
+Every swap is confirmed with a screenshot, and everyone can see your mutual rating.
+
+Opens right inside Telegram, nothing to install 🎬`;
+const ABOUT_EN = "Reel swap for creators. Support a reel, get yours supported. Every swap confirmed with a screenshot.";
+
+// Язык человека: сохранённый (переключатель в приложении) или из Telegram. Русский для ru/uk/be/kk.
+const RU_CODES = ["ru", "uk", "be", "kk"];
+const langOf = (code?: string | null) => (RU_CODES.includes(String(code ?? "").slice(0, 2)) ? "ru" : "en");
+const isEn = (u: any) => (u?.lang ?? "ru") === "en";
+const tr = (u: any, ru: string, en: string) => (isEn(u) ? en : ru);
 
 const FIELDS = ["book", "profile", "tg", "vk", "boosty", "tiktok", "insta"] as const;
 type Field = typeof FIELDS[number] | "reel";
@@ -32,6 +46,17 @@ const LABEL: Record<Field, string> = {
   tiktok: "подписка на TikTok",
   insta: "подписка на Instagram",
 };
+const LABEL_EN: Record<Field, string> = {
+  reel: "reel support (comment, save, share)",
+  book: "LitRes book rating",
+  profile: "LitRes profile follow",
+  tg: "Telegram group follow",
+  vk: "VK follow",
+  boosty: "Boosty follow",
+  tiktok: "TikTok follow",
+  insta: "Instagram follow",
+};
+const label = (u: any, f: Field) => (isEn(u) ? LABEL_EN : LABEL)[f];
 // Только эти адреса, чтобы в карточках не было скама.
 // Рилсы: конкретное видео в Instagram, TikTok, ВК Клипах или YouTube Shorts.
 const REEL = /^https:\/\/((www\.)?instagram\.com\/(reels?|p)\/[\w-]+|(www\.|vm\.)?tiktok\.com\/(@[\w.]+\/video\/\d+|[\w]+)|(m\.)?vk\.(com|ru)\/clip-?\d+_\d+|(www\.)?youtube\.com\/shorts\/[\w-]+)\/?(\?\S*)?$/;
@@ -62,16 +87,18 @@ async function tg(method: string, body: unknown) {
   });
   return r.json();
 }
+const openText = (u?: any) => tr(u, "Открыть Взаимно", "Open Vzaimno");
 const openBtn = (text = "Открыть Взаимно") => ({ inline_keyboard: [[{ text, web_app: { url: WEBAPP_URL } }]] });
-const send = (chat_id: number, text: string) =>
-  tg("sendMessage", { chat_id, text, parse_mode: "HTML", reply_markup: openBtn() });
+// u: получатель (строка vz_users), по нему выбирается язык кнопки.
+const send = (chat_id: number, text: string, u?: any) =>
+  tg("sendMessage", { chat_id, text, parse_mode: "HTML", reply_markup: openBtn(openText(u)) });
 const h = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 
-async function sendPhoto(chat_id: number, bytes: Uint8Array, caption: string) {
+async function sendPhoto(chat_id: number, bytes: Uint8Array, caption: string, u?: any) {
   const fd = new FormData();
   fd.append("chat_id", String(chat_id));
   fd.append("caption", caption);
-  fd.append("reply_markup", JSON.stringify(openBtn()));
+  fd.append("reply_markup", JSON.stringify(openBtn(openText(u))));
   fd.append("photo", new Blob([bytes], { type: "image/jpeg" }), "shot.jpg");
   await fetch(`${API}/sendPhoto`, { method: "POST", body: fd });
 }
@@ -263,11 +290,15 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     }
     const name = me.name ?? "Автор";
     const caption = reply || mutual
-      ?`${name} ответил(а) вам взаимностью: ${LABEL[field]}.`
-      : `${name} выполнил(а) задание: ${LABEL[field]}. Ответьте взаимностью во «Взаимно».`;
-    await sendPhoto(to.tg_id, bytes, caption);
+      ? tr(to, `${name} ответил(а) вам взаимностью: ${LABEL[field]}.`, `${name} supported you back: ${LABEL_EN[field]}.`)
+      : tr(to, `${name} выполнил(а) задание: ${LABEL[field]}. Ответьте взаимностью во «Взаимно».`,
+        `${name} completed your task: ${LABEL_EN[field]}. Return the favor in Vzaimno.`);
+    await sendPhoto(to.tg_id, bytes, caption, to);
     if (bonusFor) {
-      await send(bonusFor, `<b>🎉 ${h(name)} по вашему приглашению сделал(а) первый обмен. Ваша карточка сутки показывается всем наверху.</b>`);
+      const inviter = await getUser(bonusFor);
+      await send(bonusFor, tr(inviter,
+        `<b>🎉 ${h(name)} по вашему приглашению сделал(а) первый обмен. Ваша карточка сутки показывается всем наверху.</b>`,
+        `<b>🎉 ${h(name)}, who joined through your invite, made their first swap. Your card is shown first to everyone for 24 hours.</b>`), inviter);
     }
     return { ok: true };
   },
@@ -283,7 +314,10 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
       if (t.field === "reel") q = q.eq("back_reel_id", t.reel_id);
       await q;
     }
-    await send(t.from_id, `${h(me.name ?? "Автор")} не принял(а) ваш скрин: ${LABEL[t.field as Field]}. Пришлите скрин заново.`);
+    const sender = await getUser(t.from_id);
+    await send(t.from_id, tr(sender,
+      `${h(me.name ?? "Автор")} не принял(а) ваш скрин: ${LABEL[t.field as Field]}. Пришлите скрин заново.`,
+      `${h(me.name ?? "A creator")} didn't accept your screenshot: ${LABEL_EN[t.field as Field]}. Please send it again.`), sender);
     return { ok: true };
   },
 
@@ -372,12 +406,14 @@ async function onBotUpdate(update: any) {
   if (!msg || msg.chat?.type !== "private") return;
   const ref = /^\/start ref_(\d+)$/.exec(msg.text ?? "")?.[1];
   const url = ref ? `${WEBAPP_URL}?ref=${ref}` : WEBAPP_URL;
+  const u = (await getUser(msg.chat.id)) ?? { lang: langOf(msg.from?.language_code) };
   await tg("sendMessage", {
     chat_id: msg.chat.id,
-    text: "Взаимно: обмен оценками и подписками между авторами. Каждый обмен подтверждается скрином.",
+    text: tr(u, "Взаимно: обмен рилсами, оценками и подписками между авторами. Каждый обмен подтверждается скрином.",
+      "Vzaimno: a reel swap for creators. You support someone's reel, they support yours. Every swap is confirmed with a screenshot."),
     reply_markup: { inline_keyboard: [
-      [{ text: "Открыть Взаимно", web_app: { url } }],
-      [{ text: "📣 Канал проекта", url: "https://t.me/pro_vzaimno" }],
+      [{ text: openText(u), web_app: { url } }],
+      ...(isEn(u) ? [] : [[{ text: "📣 Канал проекта", url: "https://t.me/pro_vzaimno" }]]),
     ] },
   });
 }
@@ -390,14 +426,18 @@ async function cron() {
     .lt("created_at", new Date(now - 24 * H).toISOString()).limit(100);
   for (const t of remind ?? []) {
     const from = await getUser(t.from_id);
-    await send(t.to_id, `Напоминание: ${h(from?.name ?? "автор")} ждёт ответа взаимностью (${LABEL[t.field as Field]}).`);
+    const to = await getUser(t.to_id);
+    await send(t.to_id, tr(to, `Напоминание: ${h(from?.name ?? "автор")} ждёт ответа взаимностью (${LABEL[t.field as Field]}).`,
+      `Reminder: ${h(from?.name ?? "a creator")} is waiting for you to return the favor (${LABEL_EN[t.field as Field]}).`), to);
     await db.from("vz_tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id);
   }
   const { data: notify } = await base().is("notified_at", null)
     .lt("created_at", new Date(now - 48 * H).toISOString()).limit(100);
   for (const t of notify ?? []) {
     const to = await getUser(t.to_id);
-    await send(t.from_id, `${h(to?.name ?? "Автор")} пока не ответил(а) вам взаимностью (${LABEL[t.field as Field]}).`);
+    const from = await getUser(t.from_id);
+    await send(t.from_id, tr(from, `${h(to?.name ?? "Автор")} пока не ответил(а) вам взаимностью (${LABEL[t.field as Field]}).`,
+      `${h(to?.name ?? "A creator")} hasn't returned the favor yet (${LABEL_EN[t.field as Field]}).`), from);
     await db.from("vz_tasks").update({ notified_at: new Date().toISOString() }).eq("id", t.id);
   }
   // За 2 часа до конца 48 часов: итог по рилсу и предложение выложить новый.
@@ -407,8 +447,10 @@ async function cron() {
   for (const r of ending ?? []) {
     const { count } = await db.from("vz_tasks").select("id", { count: "exact", head: true }).eq("reel_id", r.id).eq("status", "ok");
     const n = count ?? 0;
+    const owner = await getUser(r.user_id);
     const got = n ? `собрал ${n} ${pl(n, "поддержку", "поддержки", "поддержек")}. Через` : "через";
-    await send(r.user_id, `🎬 Ваш рилс ${got} 2 часа уйдёт из ленты. Выложите новый, чтобы поддержка не прерывалась.`);
+    await send(r.user_id, tr(owner, `🎬 Ваш рилс ${got} 2 часа уйдёт из ленты. Выложите новый, чтобы поддержка не прерывалась.`,
+      `🎬 Your reel ${n ? `got ${n} ${n === 1 ? "support" : "supports"}. It` : ""} leaves the feed in 2 hours. Add a new one to keep the support coming.`), owner);
     await db.from("vz_reels").update({ reminded: true }).eq("id", r.id);
   }
 }
@@ -468,31 +510,41 @@ async function digest() {
   const fresh = (users ?? []).filter((u) => u.created_at > since);
   for (const u of users ?? []) {
     const lines: string[] = [];
+    const en = isEn(u);
+    const s = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
     const n = fresh.filter((f) => f.tg_id !== u.tg_id).length;
-    if (n) lines.push(`🌱 За сутки во «Взаимно» ${pl(n, "пришёл", "пришли", "пришли")} ${n} ${pl(n, "новый автор", "новых автора", "новых авторов")}.`);
+    if (n) lines.push(en ? `🌱 ${s(n, "new creator")} joined Vzaimno in the last 24 hours.`
+      : `🌱 За сутки во «Взаимно» ${pl(n, "пришёл", "пришли", "пришли")} ${n} ${pl(n, "новый автор", "новых автора", "новых авторов")}.`);
     const cards = fresh.filter((f) => f.tg_id !== u.tg_id && !f.hidden && FIELDS.some((k) => u[k] && f[k])).length;
-    if (cards) lines.push(`В вашей ленте ${cards} ${pl(cards, "новая карточка", "новые карточки", "новых карточек")}.`);
+    if (cards) lines.push(en ? `${s(cards, "new card")} in your feed.`
+      : `В вашей ленте ${cards} ${pl(cards, "новая карточка", "новые карточки", "новых карточек")}.`);
     const { data: got } = await db.from("vz_tasks").select("field").eq("to_id", u.tg_id).eq("status", "ok").gt("created_at", since);
     const stars = (got ?? []).filter((t) => t.field === "book").length;
-    const subs = (got ?? []).length - stars;
+    const reels = (got ?? []).filter((t) => t.field === "reel").length;
+    const subs = (got ?? []).length - stars - reels;
     const parts = [];
-    if (stars) parts.push(`${stars} ${pl(stars, "звезду", "звезды", "звёзд")}`);
-    if (subs) parts.push(`${subs} ${pl(subs, "подписку", "подписки", "подписок")}`);
-    if (parts.length) lines.push(`⭐ Вчера вам поставили ${parts.join(" и ")}.`);
+    if (reels) parts.push(en ? s(reels, "reel support") : `${reels} ${pl(reels, "поддержку рилса", "поддержки рилса", "поддержек рилса")}`);
+    if (stars) parts.push(en ? s(stars, "star") : `${stars} ${pl(stars, "звезду", "звезды", "звёзд")}`);
+    if (subs) parts.push(en ? s(subs, "follow") : `${subs} ${pl(subs, "подписку", "подписки", "подписок")}`);
+    if (parts.length) lines.push(en ? `⭐ Yesterday you got ${parts.join(" and ")}.` : `⭐ Вчера вы получили ${parts.join(" и ")}.`);
     const { data: wait } = await db.rpc("vz_unanswered", { uid: u.tg_id });
-    if (wait) lines.push(`⏳ Вас ${wait === 1 ? "ждёт" : "ждут"} ${wait} ${pl(wait, "ответ", "ответа", "ответов")} взаимностью.`);
+    if (wait) lines.push(en ? `⏳ ${s(wait, "creator")} ${wait === 1 ? "is" : "are"} waiting for you to return the favor.`
+      : `⏳ Вас ${wait === 1 ? "ждёт" : "ждут"} ${wait} ${pl(wait, "ответ", "ответа", "ответов")} взаимностью.`);
     const { data: sent } = await db.from("vz_tasks").select("created_at").eq("from_id", u.tg_id).eq("status", "ok")
       .gt("created_at", new Date(Date.now() - 400 * 24 * H).toISOString());
     const days = new Set((sent ?? []).map((t) => dayOf(t.created_at)));
     let streak = 0;
     for (let d = Date.now() - 24 * H; days.has(dayOf(d)); d -= 24 * H) streak++;
     if (streak && !days.has(dayOf(Date.now()))) {
-      lines.push(`🔥 Серия ${streak} ${pl(streak, "день", "дня", "дней")}: сделайте обмен сегодня, чтобы её не потерять.`);
+      lines.push(en ? `🔥 ${s(streak, "day")} in a row: make a swap today to keep your streak.`
+        : `🔥 Серия ${streak} ${pl(streak, "день", "дня", "дней")}: сделайте обмен сегодня, чтобы её не потерять.`);
     }
-    if ((u.insta || u.tiktok) && !(await activeReels(u.tg_id)).length) {
-      lines.push("🎬 У вас нет активного рилса. Добавьте свежий, и его поддержат.");
+    // Рилсы теперь главный обмен: напоминаем всем, у кого нет живого рилса.
+    if (!(await activeReels(u.tg_id)).length) {
+      lines.push(en ? "🎬 You have no active reel. Add a fresh one and creators will support it."
+        : "🎬 У вас нет активного рилса. Добавьте свежий, и его поддержат.");
     }
-    if (lines.length) await send(u.tg_id, lines.join("\n"));
+    if (lines.length) await send(u.tg_id, lines.join("\n"), u);
   }
 }
 
@@ -584,7 +636,10 @@ Deno.serve(async (req) => {
     // Тексты до нажатия Start: написал Content Creator, проверил Brand Guardian, утвердила Олеся.
     const desc = await tg("setMyDescription", { description: DESCRIPTION });
     const about = await tg("setMyShortDescription", { short_description: ABOUT });
-    return json({ hook, desc, about });
+    // Английское описание видят те, у кого Telegram на английском.
+    const descEn = await tg("setMyDescription", { description: DESCRIPTION_EN, language_code: "en" });
+    const aboutEn = await tg("setMyShortDescription", { short_description: ABOUT_EN, language_code: "en" });
+    return json({ hook, desc, about, descEn, aboutEn });
   }
   if (req.headers.get("x-telegram-bot-api-secret-token") === await SECRET) {
     await onBotUpdate(await req.json()).catch(console.error);
@@ -601,7 +656,9 @@ Deno.serve(async (req) => {
     await db.from("vz_users").insert({ tg_id: auth.user.id, invited_by: ref });
   }
   // Имя, фото и @username берём из Telegram при каждом входе, чтобы они были свежими.
-  await db.from("vz_users").update({ name: auth.user.first_name ?? null, photo_url: auth.user.photo_url ?? null, username: auth.user.username ?? null })
+  // Язык: выбор в приложении, иначе уже сохранённый, иначе по языку Telegram.
+  const lang = ["ru", "en"].includes(b.lang) ? b.lang : (me?.lang ?? langOf(auth.user.language_code));
+  await db.from("vz_users").update({ name: auth.user.first_name ?? null, photo_url: auth.user.photo_url ?? null, username: auth.user.username ?? null, lang })
     .eq("tg_id", auth.user.id);
   me = await getUser(auth.user.id);
   if (me.banned) return json({ error: "banned" }, 403);

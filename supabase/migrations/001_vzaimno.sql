@@ -263,3 +263,6 @@ alter table public.vz_reels add column if not exists reminded boolean not null d
 
 -- 28.10: @username из Telegram, чтобы админ мог написать человеку в личку.
 alter table public.vz_users add column if not exists username text;
+
+-- 29.10: язык пользователя (ru/en) для сообщений бота.
+alter table public.vz_users add column if not exists lang text;

@@ -130,17 +130,27 @@ const BOT = "vzaimnosub_bot";
 const tg = window.Telegram.WebApp;
 tg.ready(); tg.expand();
 
+// Язык: выбор человека (localStorage), иначе язык Telegram. Русский для ru/uk/be/kk, всем остальным английский.
+const RU_CODES = ["ru", "uk", "be", "kk"];
+const LANG = (() => {
+  try { const s = localStorage.getItem("vz_lang"); if (s === "ru" || s === "en") return s; } catch {}
+  return RU_CODES.includes((tg.initDataUnsafe?.user?.language_code ?? "").slice(0, 2)) ? "ru" : "en";
+})();
+const t = (ru, en) => (LANG === "en" ? en : ru);
+document.documentElement.lang = LANG;
+document.title = t("Взаимно", "Vzaimno");
+
 const FIELDS = {
-  book:    { name: "Книга ЛитРес",   task: "Поставьте 5 звёзд книге", hint: "https://www.litres.ru/book/... или https://www.litres.ru/12345678/" },
-  profile: { name: "Профиль ЛитРес", task: "Подпишитесь на профиль автора", hint: "https://www.litres.ru/author/..." },
-  tg:      { name: "ТГ-группа",      task: "Подпишитесь на группу", hint: "https://t.me/..." },
-  vk:      { name: "ВК",             task: "Подпишитесь на страницу", hint: "https://vk.com/..." },
-  boosty:  { name: "Бусти",          task: "Подпишитесь на Бусти", hint: "https://boosty.to/..." },
-  tiktok:  { name: "TikTok",         task: "Подпишитесь на TikTok", hint: "https://www.tiktok.com/@..." },
-  insta:   { name: "Instagram",      task: "Подпишитесь на Instagram", hint: "https://www.instagram.com/..." },
+  book:    { name: t("Книга ЛитРес", "LitRes book"),       task: t("Поставьте 5 звёзд книге", "Give the book 5 stars"), hint: t("https://www.litres.ru/book/... или https://www.litres.ru/12345678/", "https://www.litres.ru/book/... or https://www.litres.ru/12345678/") },
+  profile: { name: t("Профиль ЛитРес", "LitRes profile"),  task: t("Подпишитесь на профиль автора", "Follow the author's profile"), hint: "https://www.litres.ru/author/..." },
+  tg:      { name: t("ТГ-группа", "Telegram group"),       task: t("Подпишитесь на группу", "Join the group"), hint: "https://t.me/..." },
+  vk:      { name: t("ВК", "VK"),                          task: t("Подпишитесь на страницу", "Follow the page"), hint: "https://vk.com/..." },
+  boosty:  { name: t("Бусти", "Boosty"),                   task: t("Подпишитесь на Бусти", "Subscribe on Boosty"), hint: "https://boosty.to/..." },
+  tiktok:  { name: "TikTok",                               task: t("Подпишитесь на TikTok", "Follow on TikTok"), hint: "https://www.tiktok.com/@..." },
+  insta:   { name: "Instagram",                            task: t("Подпишитесь на Instagram", "Follow on Instagram"), hint: "https://www.instagram.com/..." },
 };
 // Поля профиля плюс рилс: подписи для карточек и заданий.
-const INFO = { ...FIELDS, reel: { name: "Рилс", task: "Оставьте комментарий, сохраните и перешлите (скопируйте ссылку)" } };
+const INFO = { ...FIELDS, reel: { name: t("Рилс", "Reel"), task: t("Оставьте комментарий, сохраните и перешлите (скопируйте ссылку)", "Leave a comment, save it and share it (copy the link)") } };
 const REEL = /^https:\/\/((www\.)?instagram\.com\/(reels?|p)\/[\w-]+|(www\.|vm\.)?tiktok\.com\/(@[\w.]+\/video\/\d+|[\w]+)|(m\.)?vk\.(com|ru)\/clip-?\d+_\d+|(www\.)?youtube\.com\/shorts\/[\w-]+)\/?(\?\S*)?$/;
 const PATTERN = {
   book: /^https:\/\/(www\.)?litres\.ru\/(book\/\S+|\d+\/?)$/,
@@ -151,24 +161,47 @@ const PATTERN = {
   tiktok: /^https:\/\/(www\.)?tiktok\.com\/@[\w.]+\/?(\?\S*)?$/,
   insta: /^https:\/\/(www\.)?instagram\.com\/[\w.]+\/?(\?\S*)?$/,
 };
+const DOMAINS = "litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com, youtube.com";
 
 const state = { tab: "feed", me: null, field: null, card: null, upload: null };
 const $app = document.getElementById("app");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Есть ли у человека хоть что-то для обмена: рилс или заполненная площадка.
+const hasFields = () => Object.keys(FIELDS).some((f) => state.me.user[f]);
+const hasAny = () => hasFields() || (state.reels?.length ?? 0) > 0;
 
 async function api(action, body = {}) {
   const ref = new URLSearchParams(location.search).get("ref");
   const r = await fetch(API, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ initData: tg.initData, ref, action, ...body }),
+    body: JSON.stringify({ initData: tg.initData, ref, lang: LANG, action, ...body }),
   });
   return r.json();
 }
 
+// Статичная разметка (меню, жалоба, промо) на языке человека.
+function applyStatic() {
+  const NAV = { feed: t("Лента", "Feed"), inbox: t("Входящие", "Inbox"), profile: t("Профиль", "Profile"), rules: t("Правила", "Rules"), admin: t("Админ", "Admin") };
+  document.querySelectorAll("nav button").forEach((b) => { b.textContent = NAV[b.dataset.tab]; });
+  document.querySelector("#sheet .sheet-box").innerHTML = `
+    <div class="task">${t("На что жалоба?", "What's the problem?")}</div>
+    <button class="btn red" data-reason="scam">${t("Скам-ссылка", "Scam link")}</button>
+    <button class="btn red" data-reason="fake">${t("Фейковые скрины", "Fake screenshots")}</button>
+    <button class="btn red" data-reason="other">${t("Другое", "Other")}</button>
+    <button class="btn ghost" data-reason="">${t("Отмена", "Cancel")}</button>`;
+  document.querySelector("#promo .box").innerHTML = `
+    <div class="big">🚀</div>
+    <h2>${t("Ваша карточка первой у всех", "Your card first for everyone")}</h2>
+    <p>${t("Пригласите автора. Когда он сделает первый обмен, ваша карточка сутки будет показываться всем первой.",
+      "Invite a creator. When they make their first swap, your card is shown first to everyone for 24 hours.")}</p>
+    <button class="btn" data-act="invite" style="width:100%">${t("Пригласить автора", "Invite a creator")}</button>
+    <button class="btn ghost" data-act="promo-close" style="width:100%;margin-top:10px">${t("Позже", "Later")}</button>`;
+}
+
 function badge(r) {
-  if (r == null) return "⚪ новичок";
-  return `${r >= 80 ? "🟢" : r >= 50 ? "🟡" : "🔴"} ${r}% взаимности`;
+  if (r == null) return t("⚪ новичок", "⚪ newcomer");
+  return `${r >= 80 ? "🟢" : r >= 50 ? "🟡" : "🔴"} ${r}% ${t("взаимности", "mutual")}`;
 }
 
 // Фото из Telegram; если человек его скрыл, первая буква имени.
@@ -189,7 +222,7 @@ function cardHtml(c, task) {
     <div class="rating">${badge(c.rating)}</div>
     <div class="task">${esc(task ?? INFO[c.field].task)}</div>
     <button class="link" data-open="${esc(c.url)}">${esc(c.url)}</button>
-    <div class="safe">🔒 Ссылки проверены: только litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com</div>`;
+    <div class="safe">🔒 ${t("Ссылки проверены: только", "Links are checked: only")} ${DOMAINS}</div>`;
 }
 
 // ---------- Прогресс ----------
@@ -198,9 +231,9 @@ function progressHtml() {
   const st = state.me.stats ?? { stars: 0, subs: 0, today: 0, streak: 0 };
   const pct = Math.min(100, Math.round((st.today / GOAL) * 100));
   return `<div class="progress">
-    <div class="nums"><span>⭐ Звёзды: ${st.stars}</span><span>➕ Подписки: ${st.subs}</span><span>🔥 ${st.streak} ${days(st.streak)} подряд</span></div>
+    <div class="nums"><span>⭐ ${t("Звёзды", "Stars")}: ${st.stars}</span><span>➕ ${t("Подписки", "Follows")}: ${st.subs}</span><span>🔥 ${t(`${st.streak} ${days(st.streak)} подряд`, `${st.streak}-day streak`)}</span></div>
     <div class="bar"><i style="width:${pct}%"></i></div>
-    <div class="goal">${st.today >= GOAL ? "Цель дня выполнена 🎉" : `Сегодня ${st.today} из ${GOAL} обменов`}</div>
+    <div class="goal">${st.today >= GOAL ? t("Цель дня выполнена 🎉", "Daily goal done 🎉") : t(`Сегодня ${st.today} из ${GOAL} обменов`, `Today: ${st.today} of ${GOAL} swaps`)}</div>
   </div>`;
 }
 const days = (n) => (n % 10 === 1 && n % 100 !== 11 ? "день" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "дня" : "дней");
@@ -211,18 +244,22 @@ function toast(text) {
   document.getElementById("toasts").appendChild(el);
   setTimeout(() => el.remove(), 3300);
 }
-const WHAT = { book: "⭐ звезда книге", profile: "подписка на профиль", tg: "подписка в ТГ", vk: "подписка в ВК",
-  reel: "поддержка рилса", boosty: "подписка на Бусти", tiktok: "подписка в TikTok", insta: "подписка в Instagram" };
+const WHAT = LANG === "en"
+  ? { book: "⭐ book star", profile: "profile follow", tg: "Telegram follow", vk: "VK follow",
+      reel: "reel support", boosty: "Boosty follow", tiktok: "TikTok follow", insta: "Instagram follow" }
+  : { book: "⭐ звезда книге", profile: "подписка на профиль", tg: "подписка в ТГ", vk: "подписка в ВК",
+      reel: "поддержка рилса", boosty: "подписка на Бусти", tiktok: "подписка в TikTok", insta: "подписка в Instagram" };
 function showEvents(events) {
   (events ?? []).slice(0, 4).forEach((e, i) => setTimeout(() => {
-    toast(e.is_reply ? `+1 ${WHAT[e.field]} от ${e.name}` : `${e.name} ждёт вашего ответа: ${WHAT[e.field]}`);
+    toast(e.is_reply ? t(`+1 ${WHAT[e.field]} от ${e.name}`, `+1 ${WHAT[e.field]} from ${e.name}`)
+      : t(`${e.name} ждёт вашего ответа: ${WHAT[e.field]}`, `${e.name} is waiting for your reply: ${WHAT[e.field]}`));
     tg.HapticFeedback?.notificationOccurred("success");
   }, 400 + i * 900));
 }
 function updateBadge() {
   const b = document.querySelector('nav button[data-tab="inbox"]');
   const n = state.me.unanswered ?? 0;
-  b.innerHTML = `Входящие${n ? `<span class="badge">${n}</span>` : ""}`;
+  b.innerHTML = `${t("Входящие", "Inbox")}${n ? `<span class="badge">${n}</span>` : ""}`;
 }
 async function refreshMe() {
   const me = await api("me");
@@ -233,14 +270,23 @@ async function refreshMe() {
 // Рилс скрывается по своему номеру, остальные карточки по полю.
 const skipField = (c) => (c.field === "reel" ? `reel:${c.reel_id}` : c.field);
 
+function goTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  render();
+}
+
 // ---------- Лента ----------
 async function renderFeed() {
-  const mine = Object.keys(FIELDS).filter((f) => state.me.user[f]).concat(state.reels?.length ? ["reel"] : []);
+  // Рилсы первыми: лента начинает круг с рилсов, потом площадки.
+  const mine = (state.reels?.length ? ["reel"] : []).concat(Object.keys(FIELDS).filter((f) => state.me.user[f]));
   if (!mine.length) {
-    $app.innerHTML = `<div class="empty">Лента откроется после того, как вы заполните профиль: вставьте ссылки на свои площадки. Тогда здесь появятся авторы с теми же площадками.<div class="row"><button class="btn" data-tab-go="profile">Заполнить профиль</button></div></div>`;
+    $app.innerHTML = `<div class="empty">${t("Лента откроется, когда вы добавите свой рилс или ссылку на площадку. Начните с рилса: так быстрее всего получить первые поддержки.",
+      "Your feed opens once you add your reel or a platform link. Start with a reel: it's the fastest way to get your first support.")}
+      <div class="row"><button class="btn" data-tab-go="profile">🎬 ${t("Добавить рилс", "Add my reel")}</button></div></div>`;
     return;
   }
-  $app.innerHTML = progressHtml() + `<div id="slot" class="empty">Загрузка…</div>`;
+  $app.innerHTML = progressHtml() + `<div id="slot" class="empty">${t("Загрузка…", "Loading…")}</div>`;
   // Одна общая лента вперемешку: по кругу берём следующую карточку из каждого заполненного поля.
   let card = null;
   for (let i = 0; i < mine.length && !card; i++) {
@@ -250,81 +296,92 @@ async function renderFeed() {
   }
   state.card = card;
   const slot = document.getElementById("slot");
-  if (!card) { slot.textContent = "Новых карточек пока нет. Загляните позже."; return; }
+  if (!card) { slot.textContent = t("Новых карточек пока нет. Загляните позже.", "No new cards yet. Check back later."); return; }
   slot.className = "card";
   slot.innerHTML = `<div class="chip on" style="display:inline-block;margin-bottom:12px">${INFO[card.field].name}</div>` + cardHtml(card) + `
     <div class="row">
-      <button class="btn ghost" data-act="skip">Дальше</button>
-      <button class="btn" data-act="shot">📎 Прикрепить скрин</button>
+      <button class="btn ghost" data-act="skip">${t("Дальше", "Skip")}</button>
+      <button class="btn" data-act="shot">📎 ${t("Прикрепить скрин", "Attach screenshot")}</button>
     </div>
-    <div class="paste">С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь</div>
-    <div class="row"><button class="btn ghost" data-act="chat">Уже обменялись в чате</button></div>
-    <button class="report" data-act="report">Пожаловаться</button>`;
+    <div class="paste">${t("С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь", "On a computer: take a screenshot and press Ctrl+V (Cmd+V) right here")}</div>
+    <div class="row"><button class="btn ghost" data-act="chat">${t("Уже обменялись в чате", "Already swapped in a chat")}</button></div>
+    <button class="report" data-act="report">${t("Пожаловаться", "Report")}</button>`;
   state.upload = { field: card.field, to_id: card.tg_id, reply: false, reel_id: card.reel_id };
   // Обучение на живой карточке: пока человек не сделал ни одного обмена.
   if (!state.me.stats?.given) {
     const link = slot.querySelector(".link");
     link.classList.add("pulse");
-    link.insertAdjacentHTML("beforebegin", `<div class="tip">1. Нажмите на ссылку и сделайте задание</div>`);
+    link.insertAdjacentHTML("beforebegin", `<div class="tip">${t("1. Нажмите на ссылку и сделайте задание", "1. Tap the link and complete the task")}</div>`);
     slot.querySelector('[data-act="shot"]').closest(".row")
-      .insertAdjacentHTML("beforebegin", `<div class="tip">2. Вернитесь сюда и прикрепите скрин</div>`);
+      .insertAdjacentHTML("beforebegin", `<div class="tip">${t("2. Вернитесь сюда и прикрепите скрин", "2. Come back here and attach a screenshot")}</div>`);
   }
 }
 
 // ---------- Входящие ----------
 async function renderInbox() {
-  $app.innerHTML = `<div class="empty">Загрузка…</div>`;
+  $app.innerHTML = `<div class="empty">${t("Загрузка…", "Loading…")}</div>`;
   const { items } = await api("inbox");
   state.upload = null;
-  if (!items?.length) { $app.innerHTML = `<div class="empty">Пока пусто.</div>`; return; }
+  if (!items?.length) { $app.innerHTML = `<div class="empty">${t("Пока пусто.", "Nothing here yet.")}</div>`; return; }
   $app.innerHTML = items.map((it) => {
     const c = it.card;
+    const task = INFO[c.field].task;
     let title, buttons;
     if (it.kind === "reply") {
-      title = `Выполнил(а) ваше задание. Ответьте тем же: ${INFO[c.field].task.toLowerCase()}`;
-      buttons = `<button class="btn red" data-reject="${it.id}">❌ Это не то</button>
-                 <button class="btn" data-reply="${it.id}">📎 Ответить скрином</button>`;
+      title = t(`Выполнил(а) ваше задание. Ответьте тем же: ${task.toLowerCase()}`, `Completed your task. Return the favor: ${task.toLowerCase()}`);
+      buttons = `<button class="btn red" data-reject="${it.id}">❌ ${t("Это не то", "Not valid")}</button>
+                 <button class="btn" data-reply="${it.id}">📎 ${t("Ответить скрином", "Reply with screenshot")}</button>`;
     } else if (it.kind === "received") {
-      title = it.is_reply ? "Ответил(а) вам взаимностью" : "Вы уже ответили взаимностью";
-      buttons = `<button class="btn red" data-reject="${it.id}">❌ Это не то</button>`;
+      title = it.is_reply ? t("Ответил(а) вам взаимностью", "Returned the favor") : t("Вы уже ответили взаимностью", "You already returned the favor");
+      buttons = `<button class="btn red" data-reject="${it.id}">❌ ${t("Это не то", "Not valid")}</button>`;
     } else {
-      title = `Ваш скрин не принят. Пришлите заново: ${INFO[c.field].task.toLowerCase()}`;
-      buttons = `<button class="btn" data-resend="${it.id}">📎 Прислать заново</button>`;
+      title = t(`Ваш скрин не принят. Пришлите заново: ${task.toLowerCase()}`, `Your screenshot wasn't accepted. Send it again: ${task.toLowerCase()}`);
+      buttons = `<button class="btn" data-resend="${it.id}">📎 ${t("Прислать заново", "Send again")}</button>`;
     }
     return `<div class="card item" data-item="${it.id}">${cardHtml(c, title)}
-      ${it.shot ? `<img class="shot" src="${esc(it.shot)}" alt="скрин">` : ""}
+      ${it.shot ? `<img class="shot" src="${esc(it.shot)}" alt="${t("скрин", "screenshot")}">` : ""}
       <div class="row">${buttons}</div>
-      ${it.shot ? `<button class="report" data-shotreport="${it.id}">Пожаловаться на скрин</button>` : ""}</div>`;
+      ${it.shot ? `<button class="report" data-shotreport="${it.id}">${t("Пожаловаться на скрин", "Report screenshot")}</button>` : ""}</div>`;
   }).join("");
   state.items = Object.fromEntries(items.map((it) => [it.id, it]));
   if ((state.me.stats?.given ?? 0) < 3 && items.some((it) => it.kind === "reply")) {
-    $app.insertAdjacentHTML("afterbegin", `<div class="tip">Здесь те, кто помог вам. Ответьте им: «📎 Ответить скрином»</div>`);
+    $app.insertAdjacentHTML("afterbegin", `<div class="tip">${t("Здесь те, кто помог вам. Ответьте им: «📎 Ответить скрином»", "These creators helped you. Reply to them: «📎 Reply with screenshot»")}</div>`);
   }
 }
 
 // ---------- Профиль ----------
+// Рилсы первыми: блок рилса наверху, площадки ниже и по желанию.
 function renderProfile() {
   const u = state.me.user;
+  const reels = state.reels ?? [];
   const inputs = Object.entries(FIELDS).map(([f, d]) =>
     `<label>${d.name}</label><input type="url" name="${f}" value="${esc(u[f] ?? "")}" placeholder="${d.hint}">`).join("");
   $app.innerHTML = `<div class="me"><button class="ava-btn" data-act="ava">${avatar({ name: u.name, photo: u.photo_custom ?? u.photo_url })}</button>
-    <div class="paste" style="margin:0 0 8px">Нажмите на фото, чтобы поменять</div><h2>${esc(u.name ?? "")}</h2><div class="rating">${badge(state.me.rating)}</div></div>
-    ${Object.keys(FIELDS).some((f) => u[f]) ? "" : `<div class="tip">Сначала заполните профиль: вставьте ссылки на свои площадки и нажмите «Сохранить». После этого откроется лента с другими авторами</div>`}
-    <form id="pf">${inputs}
-      <div class="row"><button class="btn ${Object.keys(FIELDS).some((f) => u[f]) ? "" : "pulse"}" type="submit">Сохранить</button></div>
-    </form>
-    <label class="switch"><input type="checkbox" id="digest" ${u.digest_off ? "" : "checked"}> Присылать сводку раз в день</label>
-    <label>Мои рилсы (живут 48 часов, до 2 одновременно)</label>
-    ${(state.reels ?? []).map((r) => `<div class="safe" style="word-break:break-all">🎬 ${esc(r.url)} · ещё ${Math.max(1, Math.ceil(48 - (Date.now() - new Date(r.created_at)) / 3600000))} ч</div>`).join("")}
+    <div class="paste" style="margin:0 0 8px">${t("Нажмите на фото, чтобы поменять", "Tap the photo to change it")}</div><h2>${esc(u.name ?? "")}</h2><div class="rating">${badge(state.me.rating)}</div></div>
+    ${hasAny() ? "" : `<div class="tip">${t("Начните с рилса: вставьте ссылку на свой рилс и нажмите «Добавить рилс». Сразу откроется лента с рилсами других авторов",
+      "Start with a reel: paste a link to your reel and tap «Add reel». Your feed with other creators' reels opens right away")}</div>`}
+    <label>🎬 ${t("Мои рилсы (живут 48 часов, до 2 одновременно)", "My reels (live for 48 hours, up to 2 at a time)")}</label>
+    ${reels.map((r) => `<div class="safe" style="word-break:break-all">🎬 ${esc(r.url)} · ${t(`ещё ${hoursLeft(r)} ч`, `${hoursLeft(r)} h left`)}</div>`).join("")}
     <input type="url" id="reelurl" placeholder="https://www.instagram.com/reel/...">
-    <div class="row"><button class="btn ghost" data-act="reel">Добавить рилс</button></div>
-    <div class="row"><button class="btn ghost" data-act="invite">Пригласить автора</button></div>
-    <div class="bonus">За каждого приглашённого, кто сделает первый обмен, ваша карточка сутки показывается всем наверху</div>
-    <div class="safe" style="text-align:center">Нужна другая площадка? Напишите <button class="report" style="margin:0" data-open="https://t.me/pro_vzaimno">@pro_vzaimno</button></div>
-    <div class="safe" style="text-align:center">Все поля по желанию. Принимаются только ссылки litres.ru, t.me, vk.com, boosty.to, tiktok.com, instagram.com.</div>`;
+    <div class="safe">${t("Instagram, TikTok, YouTube Shorts или ВК Клипы", "Instagram, TikTok, YouTube Shorts or VK Clips")}</div>
+    <div class="row"><button class="btn ${reels.length ? "ghost" : "pulse"}" data-act="reel">${t("Добавить рилс", "Add reel")}</button></div>
+    <label style="margin-top:28px;font-size:16px;color:var(--text);font-weight:600">${t("Другие площадки (по желанию)", "Other platforms (optional)")}</label>
+    <form id="pf">${inputs}
+      <div class="row"><button class="btn ghost" type="submit">${t("Сохранить", "Save")}</button></div>
+    </form>
+    <label class="switch"><input type="checkbox" id="digest" ${u.digest_off ? "" : "checked"}> ${t("Присылать сводку раз в день", "Send me a daily summary")}</label>
+    <div class="chips" style="margin-top:16px">
+      <button class="chip ${LANG === "ru" ? "on" : ""}" data-lang="ru">Русский</button>
+      <button class="chip ${LANG === "en" ? "on" : ""}" data-lang="en">English</button>
+    </div>
+    <div class="row"><button class="btn ghost" data-act="invite">${t("Пригласить автора", "Invite a creator")}</button></div>
+    <div class="bonus">${t("За каждого приглашённого, кто сделает первый обмен, ваша карточка сутки показывается всем наверху",
+      "For every invited creator who makes a first swap, your card is shown first to everyone for 24 hours")}</div>
+    ${LANG === "ru" ? `<div class="safe" style="text-align:center">Нужна другая площадка? Напишите <button class="report" style="margin:0" data-open="https://t.me/pro_vzaimno">@pro_vzaimno</button></div>` : ""}
+    <div class="safe" style="text-align:center">${t("Все поля по желанию. Принимаются только ссылки", "All fields are optional. Only links from these sites are accepted:")} ${DOMAINS}.</div>`;
   document.getElementById("pf").onsubmit = async (e) => {
     e.preventDefault();
-    const wasFilled = Object.keys(FIELDS).some((f) => state.me.user[f]);
+    const hadAny = hasAny();
     const data = {}; let ok = true;
     for (const inp of e.target.querySelectorAll("input")) {
       const v = inp.value.trim();
@@ -333,25 +390,21 @@ function renderProfile() {
       if (bad) ok = false;
       data[inp.name] = v;
     }
-    if (!ok) { tg.showAlert("Проверьте ссылки, выделенные красным."); return; }
+    if (!ok) { tg.showAlert(t("Проверьте ссылки, выделенные красным.", "Check the links marked in red.")); return; }
     const r = await api("save", data);
-    if (r.error) { tg.showAlert("Ссылка не прошла проверку: " + FIELDS[r.error].name); return; }
+    if (r.error) { tg.showAlert(t("Ссылка не прошла проверку: ", "This link didn't pass the check: ") + FIELDS[r.error].name); return; }
     Object.assign(state.me.user, Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v || null])));
     tg.HapticFeedback?.notificationOccurred("success");
     // Первое сохранение: сразу ведём в ленту делать первый обмен.
-    if (!wasFilled && Object.keys(FIELDS).some((f) => state.me.user[f])) {
-      state.tab = "feed";
-      document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === "feed"));
-      render();
-      return;
-    }
-    tg.showAlert("Сохранено.");
+    if (!hadAny && hasAny()) { goTab("feed"); return; }
+    tg.showAlert(t("Сохранено.", "Saved."));
   };
   document.getElementById("digest").onchange = (e) => {
     state.me.user.digest_off = !e.target.checked;
     api("set_digest", { off: !e.target.checked });
   };
 }
+const hoursLeft = (r) => Math.max(1, Math.ceil(48 - (Date.now() - new Date(r.created_at)) / 3600000));
 
 // ---------- Скрин ----------
 function compress(file, max = 1280) {
@@ -373,8 +426,8 @@ async function sendShot(file) {
   if (!state.upload || !file?.type.startsWith("image/")) return;
   const image = await compress(file);
   const r = await api("shot", { ...state.upload, image });
-  if (r.error === "noreel") { tg.showAlert("Чтобы поддерживать рилсы, добавьте свой рилс в профиле."); return; }
-  if (r.error) { tg.showAlert("Не получилось отправить скрин. Попробуйте ещё раз."); return; }
+  if (r.error === "noreel") { tg.showAlert(t("Чтобы поддерживать рилсы, добавьте свой рилс в профиле.", "To support reels, add your own reel in your profile first.")); return; }
+  if (r.error) { tg.showAlert(t("Не получилось отправить скрин. Попробуйте ещё раз.", "Couldn't send the screenshot. Please try again.")); return; }
   const done = document.getElementById("done");
   done.classList.add("show");
   tg.HapticFeedback?.notificationOccurred("success");
@@ -393,82 +446,94 @@ document.addEventListener("paste", (e) => {
   if (item) sendShot(item.getAsFile());
 });
 
+const SHARE = t("Привет! Это бот взаимной поддержки для авторов и блогеров: обмен рилсами, а также ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @pro_vzaimno). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.",
+  "Hi! Vzaimno is a reel swap for creators: you support someone's reel, they support yours. Every swap is confirmed with a screenshot. Join me here:");
+
 // ---------- Клики ----------
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("button");
-  if (!t) return;
-  if (t.dataset.tab) {
-    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b === t));
-    state.tab = t.dataset.tab; render();
-  } else if (t.dataset.field) {
-    state.field = t.dataset.field; renderFeed();
-  } else if (t.dataset.open) {
-    t.dataset.open.startsWith("https://t.me/") ? tg.openTelegramLink(t.dataset.open) : tg.openLink(t.dataset.open);
-  } else if (t.dataset.act === "skip") {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.tab) {
+    goTab(b.dataset.tab);
+  } else if (b.dataset.lang) {
+    // Новый язык: запоминаем, сообщаем серверу (для сообщений бота) и перезапускаем приложение.
+    try { localStorage.setItem("vz_lang", b.dataset.lang); } catch {}
+    await fetch(API, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: tg.initData, lang: b.dataset.lang, action: "me" }) });
+    location.reload();
+  } else if (b.dataset.field) {
+    state.field = b.dataset.field; renderFeed();
+  } else if (b.dataset.open) {
+    b.dataset.open.startsWith("https://t.me/") ? tg.openTelegramLink(b.dataset.open) : tg.openLink(b.dataset.open);
+  } else if (b.dataset.act === "skip") {
     await api("skip", { field: skipField(state.card), to_id: state.card.tg_id }); renderFeed();
-  } else if (t.dataset.act === "report") {
+  } else if (b.dataset.act === "report") {
     document.getElementById("sheet").classList.add("show");
-  } else if (t.dataset.reason !== undefined) {
+  } else if (b.dataset.reason !== undefined) {
     document.getElementById("sheet").classList.remove("show");
-    if (t.dataset.reason) {
-      await api("report", { to_id: state.card.tg_id, reason: t.dataset.reason });
-      tg.showAlert("Жалоба отправлена.");
+    if (b.dataset.reason) {
+      await api("report", { to_id: state.card.tg_id, reason: b.dataset.reason });
+      tg.showAlert(t("Жалоба отправлена.", "Report sent."));
     }
-  } else if (t.dataset.admtab) {
-    state.admTab = t.dataset.admtab; drawAdmin();
-  } else if (t.dataset.shotreport) {
-    tg.showConfirm("Пожаловаться на непристойный скрин? Его увидит администратор.", async (yes) => {
+  } else if (b.dataset.admtab) {
+    state.admTab = b.dataset.admtab; drawAdmin();
+  } else if (b.dataset.shotreport) {
+    tg.showConfirm(t("Пожаловаться на непристойный скрин? Его увидит администратор.", "Report this screenshot as inappropriate? The admin will review it."), async (yes) => {
       if (!yes) return;
-      await api("report", { task_id: Number(t.dataset.shotreport), reason: "nsfw" });
-      tg.showAlert("Жалоба отправлена.");
+      await api("report", { task_id: Number(b.dataset.shotreport), reason: "nsfw" });
+      tg.showAlert(t("Жалоба отправлена.", "Report sent."));
     });
-  } else if (t.dataset.adm) {
-    await api("admin_set", { tg_id: Number(t.dataset.adm), [t.dataset.key]: t.dataset.val === "true" });
+  } else if (b.dataset.adm) {
+    await api("admin_set", { tg_id: Number(b.dataset.adm), [b.dataset.key]: b.dataset.val === "true" });
     renderAdmin();
-  } else if (t.dataset.act === "chat") {
-    tg.showConfirm("Скрыть эту карточку навсегда? Без скрина и уведомлений.", async (yes) => {
+  } else if (b.dataset.act === "chat") {
+    tg.showConfirm(t("Скрыть эту карточку навсегда? Без скрина и уведомлений.", "Hide this card forever? No screenshot, no notifications."), async (yes) => {
       if (!yes) return;
       await api("skip", { field: skipField(state.card), to_id: state.card.tg_id, done: true }); renderFeed();
     });
-  } else if (t.dataset.act === "reel") {
+  } else if (b.dataset.act === "reel") {
     const url = document.getElementById("reelurl").value.trim();
-    if (!REEL.test(url)) { tg.showAlert("Нужна ссылка на конкретное видео: Instagram, TikTok, ВК Клипы или YouTube Shorts."); return; }
+    if (!REEL.test(url)) { tg.showAlert(t("Нужна ссылка на конкретное видео: Instagram, TikTok, ВК Клипы или YouTube Shorts.", "Paste a link to a specific video: Instagram, TikTok, VK Clips or YouTube Shorts.")); return; }
+    const hadAny = hasAny();
     const r = await api("reel_add", { url });
-    if (r.error) { tg.showAlert("Ссылка не прошла проверку."); return; }
-    state.reels = r.reels; tg.HapticFeedback?.notificationOccurred("success"); renderProfile();
-  } else if (t.dataset.act === "ava") {
+    if (r.error) { tg.showAlert(t("Ссылка не прошла проверку.", "This link didn't pass the check.")); return; }
+    state.reels = r.reels; tg.HapticFeedback?.notificationOccurred("success");
+    // Первый рилс: сразу в ленту, к рилсам других.
+    if (!hadAny) { goTab("feed"); return; }
+    renderProfile();
+  } else if (b.dataset.act === "ava") {
     document.getElementById("ava").click();
-  } else if (t.dataset.act === "shot") {
+  } else if (b.dataset.act === "shot") {
     document.getElementById("file").click();
-  } else if (t.dataset.tabGo) {
-    state.tab = t.dataset.tabGo;
-    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === state.tab));
-    render();
-  } else if (t.dataset.act === "promo-close") {
+  } else if (b.dataset.tabGo) {
+    goTab(b.dataset.tabGo);
+  } else if (b.dataset.act === "promo-close") {
     document.getElementById("promo").classList.remove("show");
-  } else if (t.dataset.act === "invite") {
+  } else if (b.dataset.act === "invite") {
     document.getElementById("promo").classList.remove("show");
     const link = `https://t.me/${BOT}?startapp=ref_${state.me.user.tg_id}`;
-    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Привет! Это бот взаимной поддержки для авторов и блогеров на ЛитРес, ТГ, ВК, Бусти, TikTok, Instagram (можно предложить свою площадку: @pro_vzaimno). Это бесплатно, и запросы на взаимность не тонут в бесконечных чатах, а удобно организованы в умной ленте! Можно делиться с другими, чтобы взаимности было больше.")}`);
-  } else if (t.dataset.reply || t.dataset.resend) {
-    const it = state.items[t.dataset.reply || t.dataset.resend];
-    state.upload = { field: it.card.field, to_id: it.card.tg_id, reply: !!t.dataset.reply || it.is_reply, reel_id: it.card.reel_id };
+    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(SHARE)}`);
+  } else if (b.dataset.reply || b.dataset.resend) {
+    const it = state.items[b.dataset.reply || b.dataset.resend];
+    state.upload = { field: it.card.field, to_id: it.card.tg_id, reply: !!b.dataset.reply || it.is_reply, reel_id: it.card.reel_id };
     document.getElementById("file").click();
-  } else if (t.dataset.reject) {
-    tg.showConfirm("Скрин не подтверждает задание?", async (yes) => {
+  } else if (b.dataset.reject) {
+    tg.showConfirm(t("Скрин не подтверждает задание?", "The screenshot doesn't confirm the task?"), async (yes) => {
       if (!yes) return;
-      await api("reject", { task_id: Number(t.dataset.reject) }); renderInbox();
+      await api("reject", { task_id: Number(b.dataset.reject) }); renderInbox();
     });
   }
 });
 
-// Текст правил: Content Creator, проверка Brand Guardian.
-const RULES = `<b>Профиль</b>
+// Текст правил. Блок про рилсы первым: это главный обмен.
+const RULES_RU = `<b>Рилсы</b>
+<p>Вставьте в профиле ссылку на конкретное видео: Instagram, TikTok, YouTube Shorts или ВК Клипы. Рилс живёт в ленте 48 часов, одновременно можно два. Рилсы других авторов видны, пока у вас есть свой живой рилс. Поддержка рилса: комментарий, сохранение, пересылка и скрин. В ответ автор поддерживает ваш рилс.</p>
+<b>Другие площадки</b>
 <p>В профиле 7 полей, все по желанию: книга и профиль автора на ЛитРес, группа в Телеграме, ВК, Бусти, TikTok, Instagram. Принимаются только ссылки с litres.ru, t.me, vk.com, vk.ru, boosty.to, tiktok.com и instagram.com, поэтому в карточках нет скама.</p>
 <b>Обмен по полям</b>
 <p>Книга на книгу, профиль на профиль, группа на группу. В ленте вы видите авторов, у которых заполнено то же поле.</p>
 <b>Как обменяться</b>
-<p>Откройте ссылку в карточке, поставьте книге 5 звёзд или подпишитесь, вернитесь и прикрепите скрин. С компьютера его можно вставить через Ctrl+V. Автор получит ваш скрин и карточку, а в ответ пришлёт свой скрин.</p>
+<p>Откройте ссылку в карточке, сделайте задание, вернитесь и прикрепите скрин. С компьютера его можно вставить через Ctrl+V. Автор получит ваш скрин и карточку, а в ответ пришлёт свой скрин.</p>
 <b>Скрин обязателен</b>
 <p>Если скрин не подтверждает задание, автор нажмёт «Это не то», и скрин нужно будет прислать заново. Если вам не ответили, через 24 часа бот напомнит автору, а через 48 часов сообщит вам.</p>
 <b>Рейтинг</b>
@@ -481,6 +546,26 @@ const RULES = `<b>Профиль</b>
 <p>Новый автор, пришедший по вашей ссылке, первой увидит вашу карточку. За каждого приглашённого, который сделал первый обмен, ваша карточка сутки показывается всем в начале ленты.</p>
 <b>Жалобы</b>
 <p>Пожаловаться можно на ссылку со скамом, фейковые скрины или другое нарушение. После 3 жалоб от разных людей карточка скрывается до решения администратора. За нарушения он может заблокировать доступ.</p>`;
+const RULES_EN = `<b>Reels</b>
+<p>Paste a link to a specific video in your profile: Instagram, TikTok, YouTube Shorts or VK Clips. A reel stays in the feed for 48 hours, and you can have two at a time. You see other creators' reels while you have a live reel of your own. Supporting a reel means a comment, a save, a share and a screenshot. In return, the creator supports your reel.</p>
+<b>Other platforms</b>
+<p>Your profile has 7 optional fields: LitRes book and author profile, Telegram group, VK, Boosty, TikTok, Instagram. Only links from litres.ru, t.me, vk.com, vk.ru, boosty.to, tiktok.com and instagram.com are accepted, so cards stay free of scams.</p>
+<b>Swaps by field</b>
+<p>Book for book, profile for profile, group for group. In the feed you see creators who filled in the same field.</p>
+<b>How to swap</b>
+<p>Open the link on the card, complete the task, come back and attach a screenshot. On a computer you can paste it with Ctrl+V. The creator gets your screenshot and your card, and sends their screenshot back.</p>
+<b>Screenshot required</b>
+<p>If a screenshot doesn't confirm the task, the creator taps «Not valid» and you send it again. If nobody replies, the bot reminds the creator after 24 hours and lets you know after 48 hours.</p>
+<b>Rating</b>
+<p>The share of swaps a person returned. Everyone can see it: 🟢 80% and up, 🟡 50 to 79%, 🔴 under 50%, ⚪ newcomer.</p>
+<b>Feed order</b>
+<p>Creators who give more than they get are shown higher. If a creator has 10 unanswered swaps, their card is hidden until they reply.</p>
+<b>Buttons</b>
+<p>«Already swapped in a chat» hides a card forever, with no screenshot and no notifications. «Skip» moves it to the end of the line.</p>
+<b>Invites</b>
+<p>A creator who joins through your link sees your card first. For every invited creator who makes a first swap, your card is shown first to everyone for 24 hours.</p>
+<b>Reports</b>
+<p>You can report a scam link, fake screenshots or another violation. After 3 reports from different people a card is hidden until the admin decides. The admin can block access for violations.</p>`;
 
 const REASON = { scam: "скам-ссылка", fake: "фейковые скрины", nsfw: "непристойный скрин", other: "другое" };
 
@@ -532,32 +617,30 @@ function drawAdmin() {
 function render() {
   if (state.tab === "feed") renderFeed();
   else if (state.tab === "inbox") renderInbox();
-  else if (state.tab === "rules") $app.innerHTML = `<div class="rules">${RULES}</div>`;
+  else if (state.tab === "rules") $app.innerHTML = `<div class="rules">${t(RULES_RU, RULES_EN)}</div>`;
   else if (state.tab === "admin") renderAdmin();
   else renderProfile();
 }
 
 (async () => {
+  applyStatic();
   const me = await api("me");
-  if (me.error === "banned") { $app.innerHTML = `<div class="empty">Доступ закрыт.</div>`; return; }
-  if (me.error) { $app.innerHTML = `<div class="empty">Откройте Взаимно из Telegram.</div>`; return; }
+  if (me.error === "banned") { $app.innerHTML = `<div class="empty">${t("Доступ закрыт.", "Access closed.")}</div>`; return; }
+  if (me.error) { $app.innerHTML = `<div class="empty">${t("Откройте Взаимно из Telegram.", "Open Vzaimno from Telegram.")}</div>`; return; }
   state.me = me;
   document.getElementById("nav-admin").hidden = !me.user.is_admin;
   updateBadge(); showEvents(me.events);
-  // Раз в день при входе: предложение пригласить автора (только тем, кто уже заполнил профиль).
+  state.reels = (await api("reels")).reels ?? [];
+  // Раз в день при входе: предложение пригласить автора (только тем, у кого уже есть рилс или площадка).
   try {
     const today = new Date().toISOString().slice(0, 10);
-    if (Object.keys(FIELDS).some((f) => me.user[f]) && localStorage.getItem("vz_promo") !== today) {
+    if (hasAny() && localStorage.getItem("vz_promo") !== today) {
       localStorage.setItem("vz_promo", today);
       setTimeout(() => document.getElementById("promo").classList.add("show"), 1500);
     }
   } catch {}
-  state.reels = (await api("reels")).reels ?? [];
-  if (!Object.keys(FIELDS).some((f) => me.user[f])) {
-    state.tab = "profile";
-    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === "profile"));
-  }
-  render();
+  if (!hasAny()) state.tab = "profile";
+  goTab(state.tab);
 })();
 </script>
 </body>
