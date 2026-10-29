@@ -641,6 +641,23 @@ Deno.serve(async (req) => {
     }
     return json({ sent, of: (users ?? []).length, file_id: fileId });
   }
+  // Разовая рассылка «в ленте нет вашего рилса» всем, у кого нет живого рилса, на языке человека. Ключ + защита от повтора.
+  if (url.searchParams.has("reel_nudge")) {
+    const key = Deno.env.get("VZ_POST_KEY");
+    if (!key || req.headers.get("x-post-key") !== key) return new Response("forbidden", { status: 403 });
+    const { data: ok } = await db.rpc("vz_claim_run", { job: "reel_nudge" });
+    if (!ok) return json({ error: "already_sent" });
+    const { data: users } = await db.from("vz_users").select("*").eq("banned", false);
+    let sent = 0, skipped = 0;
+    for (const u of users ?? []) {
+      if ((await activeReels(u.tg_id)).length) { skipped++; continue; }
+      const r = await sendAddReel(u.tg_id, u, tr(u,
+        "🎬🚨 <b>В ЛЕНТЕ НЕТ ВАШЕГО РИЛСА</b>\n\nДобавьте рилс, и его увидят и поддержат другие авторы. Это 10 секунд: вставьте ссылку на видео в профиле.",
+        "🎬🚨 <b>YOUR REEL IS NOT IN THE FEED</b>\n\nAdd a reel and other creators will see and support it. It takes 10 seconds: paste a video link in your profile."));
+      if (r.ok) sent++;
+    }
+    return json({ sent, of: (users ?? []).length, skipped });
+  }
   // cron, setup и broadcast безопасно вызывать повторно: они ничего не раскрывают и не дублируют.
   if (url.searchParams.has("cron")) { await cron(); return new Response("ok"); }
   // Сводки защищены от повторного вызова: не чаще раза в 20 часов.

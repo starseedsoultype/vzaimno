@@ -629,6 +629,14 @@ function render() {
   if (me.error) { $app.innerHTML = `<div class="empty">${t("Откройте Взаимно из Telegram.", "Open Vzaimno from Telegram.")}</div>`; return; }
   state.me = me;
   document.getElementById("nav-admin").hidden = !me.user.is_admin;
+  // Пришёл по ссылке и не нажимал Start: бот не может ему писать. Просим разрешение системным окном, не чаще раза в день.
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    if (tg.initDataUnsafe?.user?.allows_write_to_pm === false && tg.requestWriteAccess && localStorage.getItem("vz_wa") !== today) {
+      localStorage.setItem("vz_wa", today);
+      tg.requestWriteAccess();
+    }
+  } catch {}
   updateBadge(); showEvents(me.events);
   state.reels = (await api("reels")).reels ?? [];
   // Раз в день при входе: предложение пригласить автора (только тем, у кого уже есть рилс или площадка).
