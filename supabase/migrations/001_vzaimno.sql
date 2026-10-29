@@ -266,3 +266,6 @@ alter table public.vz_users add column if not exists username text;
 
 -- 29.10: язык пользователя (ru/en) для сообщений бота.
 alter table public.vz_users add column if not exists lang text;
+
+-- 29.10: отметка «сообщили, что рилс ушёл из ленты».
+alter table public.vz_reels add column if not exists ended_notified boolean not null default false;

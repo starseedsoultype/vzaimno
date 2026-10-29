@@ -639,6 +639,9 @@ function render() {
       setTimeout(() => document.getElementById("promo").classList.add("show"), 1500);
     }
   } catch {}
+  // Кнопка из сообщения бота может открыть нужную вкладку: ?tab=profile.
+  const startTab = new URLSearchParams(location.search).get("tab");
+  if (["feed", "inbox", "profile", "rules"].includes(startTab)) state.tab = startTab;
   if (!hasAny()) state.tab = "profile";
   goTab(state.tab);
 })();

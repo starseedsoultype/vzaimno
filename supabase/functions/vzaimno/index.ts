@@ -88,10 +88,18 @@ async function tg(method: string, body: unknown) {
   return r.json();
 }
 const openText = (u?: any) => tr(u, "Открыть Взаимно", "Open Vzaimno");
-const openBtn = (text = "Открыть Взаимно") => ({ inline_keyboard: [[{ text, web_app: { url: WEBAPP_URL } }]] });
+const openBtn = (text = "Открыть Взаимно", url = WEBAPP_URL) => ({ inline_keyboard: [[{ text, web_app: { url } }]] });
 // u: получатель (строка vz_users), по нему выбирается язык кнопки.
 const send = (chat_id: number, text: string, u?: any) =>
   tg("sendMessage", { chat_id, text, parse_mode: "HTML", reply_markup: openBtn(openText(u)) });
+// Сообщение про рилс: кнопка сразу открывает профиль, где добавляется рилс.
+const sendAddReel = (chat_id: number, u: any, text: string) =>
+  tg("sendMessage", { chat_id, text, parse_mode: "HTML", reply_markup: openBtn(tr(u, "🎬 Добавить рилс", "🎬 Add a reel"), `${WEBAPP_URL}?tab=profile`) });
+const byUser = (rows: any[]) => {
+  const m = new Map<number, any[]>();
+  for (const r of rows) m.set(r.user_id, [...(m.get(r.user_id) ?? []), r]);
+  return m;
+};
 const h = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
 
 async function sendPhoto(chat_id: number, bytes: Uint8Array, caption: string, u?: any) {
@@ -444,14 +452,29 @@ async function cron() {
   const { data: ending } = await db.from("vz_reels").select("*").eq("retired", false).eq("reminded", false)
     .lt("created_at", new Date(now - (REEL_TTL - 2 * H)).toISOString())
     .gt("created_at", new Date(now - REEL_TTL).toISOString()).limit(100);
-  for (const r of ending ?? []) {
-    const { count } = await db.from("vz_tasks").select("id", { count: "exact", head: true }).eq("reel_id", r.id).eq("status", "ok");
+  // Одно громкое сообщение на человека, даже если уходят два рилса сразу.
+  for (const [uid, rs] of byUser(ending ?? [])) {
+    const { count } = await db.from("vz_tasks").select("id", { count: "exact", head: true })
+      .in("reel_id", rs.map((r) => r.id)).eq("status", "ok");
     const n = count ?? 0;
-    const owner = await getUser(r.user_id);
-    const got = n ? `собрал ${n} ${pl(n, "поддержку", "поддержки", "поддержек")}. Через` : "через";
-    await send(r.user_id, tr(owner, `🎬 Ваш рилс ${got} 2 часа уйдёт из ленты. Выложите новый, чтобы поддержка не прерывалась.`,
-      `🎬 Your reel ${n ? `got ${n} ${n === 1 ? "support" : "supports"}. It` : ""} leaves the feed in 2 hours. Add a new one to keep the support coming.`), owner);
-    await db.from("vz_reels").update({ reminded: true }).eq("id", r.id);
+    const owner = await getUser(uid);
+    const two = rs.length > 1;
+    await sendAddReel(uid, owner, tr(owner,
+      `⏰🚨 <b>${two ? "РИЛСЫ УХОДЯТ" : "РИЛС УХОДИТ"} ИЗ ЛЕНТЫ ЧЕРЕЗ 2 ЧАСА</b>\n\n${n ? `${two ? "Ваши рилсы собрали" : "Ваш рилс собрал"} ${n} ${pl(n, "поддержку", "поддержки", "поддержек")}.\n` : ""}Добавьте новый, чтобы поддержка не прерывалась 👇`,
+      `⏰🚨 <b>YOUR ${two ? "REELS LEAVE" : "REEL LEAVES"} THE FEED IN 2 HOURS</b>\n\n${n ? `${two ? "Your reels got" : "Your reel got"} ${n} ${n === 1 ? "support" : "supports"}.\n` : ""}Add a new one to keep the support coming 👇`));
+    await db.from("vz_reels").update({ reminded: true }).in("id", rs.map((r) => r.id));
+  }
+  // Рилс ушёл из ленты (за последние сутки), а нового нет: сообщаем один раз.
+  const { data: ended } = await db.from("vz_reels").select("*").eq("retired", false).eq("ended_notified", false)
+    .lt("created_at", new Date(now - REEL_TTL).toISOString())
+    .gt("created_at", new Date(now - REEL_TTL - 24 * H).toISOString()).limit(100);
+  for (const [uid, rs] of byUser(ended ?? [])) {
+    await db.from("vz_reels").update({ ended_notified: true }).in("id", rs.map((r) => r.id));
+    if ((await activeReels(uid)).length) continue;
+    const owner = await getUser(uid);
+    await sendAddReel(uid, owner, tr(owner,
+      `🔴⛔ <b>${rs.length > 1 ? "ВАШИ РИЛСЫ УШЛИ" : "ВАШ РИЛС УШЁЛ"} ИЗ ЛЕНТЫ</b>\n\nСейчас вас никто не поддерживает. Добавьте новый рилс, и он сразу появится у других авторов.`,
+      `🔴⛔ <b>YOUR ${rs.length > 1 ? "REELS ARE" : "REEL IS"} OUT OF THE FEED</b>\n\nNobody can support you right now. Add a new reel and other creators will see it right away.`));
   }
 }
 
