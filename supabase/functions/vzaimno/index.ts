@@ -580,6 +580,18 @@ Deno.serve(async (req) => {
     const key = Deno.env.get("VZ_POST_KEY");
     if (!key || req.headers.get("x-post-key") !== key) return new Response("forbidden", { status: 403 });
     const form = await req.formData();
+    // Одно видео (поле video) уходит в канал отдельным постом с подписью.
+    const video = form.get("video");
+    if (video instanceof File) {
+      const v = new FormData();
+      v.append("chat_id", "@pro_vzaimno");
+      v.append("video", video);
+      v.append("caption", String(form.get("caption") ?? ""));
+      v.append("parse_mode", "HTML");
+      v.append("supports_streaming", "true");
+      const r = await fetch(`https://api.telegram.org/bot${TOKEN}/sendVideo`, { method: "POST", body: v });
+      return json({ ok: r.ok, status: r.status });
+    }
     const out = new FormData();
     const media = [];
     for (const [name, file] of form.entries()) {
