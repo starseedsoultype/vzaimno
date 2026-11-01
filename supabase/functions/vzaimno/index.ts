@@ -398,12 +398,19 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
 
   async inbox(me) {
     const week = new Date(Date.now() - 7 * 24 * H).toISOString();
-    const { data: incoming } = await db.from("vz_tasks").select("*")
-      .eq("to_id", me.tg_id).eq("status", "ok").gt("created_at", week).order("created_at", { ascending: false });
-    const { data: rejected } = await db.from("vz_tasks").select("*")
+    // Неотвеченные задания не исчезают из входящих с течением времени.
+    const { data: pending, error: pendingError } = await db.from("vz_tasks").select("*")
+      .eq("to_id", me.tg_id).eq("status", "ok").eq("is_reply", false)
+      .is("answered_at", null).order("created_at", { ascending: true });
+    const { data: history, error: historyError } = await db.from("vz_tasks").select("*")
+      .eq("to_id", me.tg_id).eq("status", "ok")
+      .or("is_reply.eq.true,answered_at.not.is.null")
+      .gt("created_at", week).order("created_at", { ascending: false });
+    const { data: rejected, error: rejectedError } = await db.from("vz_tasks").select("*")
       .eq("from_id", me.tg_id).eq("status", "rejected").order("created_at", { ascending: false });
+    if (pendingError || historyError || rejectedError) throw pendingError || historyError || rejectedError;
     const items = [];
-    for (const t of [...(incoming ?? []), ...(rejected ?? [])]) {
+    for (const t of [...(pending ?? []), ...(rejected ?? []), ...(history ?? [])]) {
       const mine = t.from_id === me.tg_id;
       const other = await getUser(mine ? t.to_id : t.from_id);
       if (!other) continue;

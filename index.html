@@ -320,11 +320,19 @@ async function renderFeed() {
 
 // ---------- Входящие ----------
 async function renderInbox() {
-  $app.innerHTML = `<div class="empty">${t("Загрузка…", "Loading…")}</div>`;
-  const { items } = await api("inbox");
   state.upload = null;
+  state.items = {};
+  $app.innerHTML = `<div class="empty">${t("Загрузка…", "Loading…")}</div>`;
+  let result;
+  try { result = await api("inbox"); } catch { result = { error: "network" }; }
+  if (state.tab !== "inbox") return;
+  if (result.error) {
+    $app.innerHTML = `<div class="empty">${t("Не удалось загрузить задания. Попробуйте ещё раз.", "Couldn't load tasks. Please try again.")}<div class="row"><button class="btn" data-tab-go="inbox">${t("Повторить", "Retry")}</button></div></div>`;
+    return;
+  }
+  const { items } = result;
   if (!items?.length) { $app.innerHTML = `<div class="empty">${t("Пока пусто.", "Nothing here yet.")}</div>`; return; }
-  $app.innerHTML = items.map((it) => {
+  const itemHtml = (it) => {
     const c = it.card;
     const task = INFO[c.field].task;
     let title, buttons;
@@ -343,7 +351,14 @@ async function renderInbox() {
       ${it.shot ? `<img class="shot" src="${esc(it.shot)}" alt="${t("скрин", "screenshot")}">` : ""}
       <div class="row">${buttons}</div>
       ${it.shot ? `<button class="report" data-shotreport="${it.id}">${t("Пожаловаться на скрин", "Report screenshot")}</button>` : ""}</div>`;
-  }).join("");
+  };
+  const pending = items.filter((it) => it.kind === "reply");
+  const resend = items.filter((it) => it.kind === "resend");
+  const history = items.filter((it) => it.kind === "received");
+  $app.innerHTML = `<h2>${t("Ждут вашего ответа", "Waiting for your reply")} (${pending.length})</h2>`
+    + (pending.length ? pending.map(itemHtml).join("") : `<p class="rating">${t("Сейчас нет заданий, ожидающих вашего ответа.", "No tasks are waiting for your reply.")}</p>`)
+    + (resend.length ? `<h2>${t("Нужно прислать скрин заново", "Send a new screenshot")} (${resend.length})</h2>${resend.map(itemHtml).join("")}` : "")
+    + (history.length ? `<details><summary>${t("Завершённые за последние 7 дней", "Completed in the last 7 days")} (${history.length})</summary><div style="margin-top:16px">${history.map(itemHtml).join("")}</div></details>` : "");
   state.items = Object.fromEntries(items.map((it) => [it.id, it]));
   if ((state.me.stats?.given ?? 0) < 3 && items.some((it) => it.kind === "reply")) {
     $app.insertAdjacentHTML("afterbegin", `<div class="tip">${t("Здесь те, кто помог вам. Ответьте им: «📎 Ответить скрином»", "These creators helped you. Reply to them: «📎 Reply with screenshot»")}</div>`);
@@ -690,7 +705,7 @@ function render() {
   // Кнопка из сообщения бота может открыть нужную вкладку: ?tab=profile.
   const startTab = new URLSearchParams(location.search).get("tab");
   if (["feed", "inbox", "profile", "rules"].includes(startTab)) state.tab = startTab;
-  if (!hasAny()) state.tab = "profile";
+  if (!hasAny() && startTab !== "inbox") state.tab = "profile";
   goTab(state.tab);
 })();
 </script>
