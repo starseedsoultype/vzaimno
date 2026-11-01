@@ -172,10 +172,11 @@ const hasAny = () => hasFields() || (state.reels?.length ?? 0) > 0;
 
 async function api(action, body = {}) {
   const ref = new URLSearchParams(location.search).get("ref");
+  const source = new URLSearchParams(location.search).get("source");
   const r = await fetch(API, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ initData: tg.initData, ref, lang: LANG, action, ...body }),
+    body: JSON.stringify({ initData: tg.initData, ref, source, lang: LANG, action, ...body }),
   });
   return r.json();
 }
@@ -476,7 +477,8 @@ document.addEventListener("click", async (e) => {
       tg.showAlert(t("Жалоба отправлена.", "Report sent."));
     }
   } else if (b.dataset.admtab) {
-    state.admTab = b.dataset.admtab; drawAdmin();
+    state.admTab = b.dataset.admtab;
+    if (state.admTab === "sources") renderSources(); else drawAdmin();
   } else if (b.dataset.shotreport) {
     tg.showConfirm(t("Пожаловаться на непристойный скрин? Его увидит администратор.", "Report this screenshot as inappropriate? The admin will review it."), async (yes) => {
       if (!yes) return;
@@ -574,7 +576,7 @@ async function renderAdmin() {
   $app.innerHTML = `<div class="empty">Загрузка…</div>`;
   const { users } = await api("admin_list");
   state.admUsers = users ?? [];
-  drawAdmin();
+  if (state.admTab === "sources") renderSources(); else drawAdmin();
 }
 
 function drawAdmin() {
@@ -586,8 +588,8 @@ function drawAdmin() {
   if (q) list = list.filter((u) => (u.name ?? "").toLowerCase().includes(q));
   const count = (t) => t === "reports" ? state.admUsers.filter((u) => u.reports.length).length
     : t === "hidden" ? state.admUsers.filter((u) => u.hidden || u.banned).length : state.admUsers.length;
-  const tabs = [["reports", "Жалобы"], ["hidden", "Скрытые"], ["all", "Все"]].map(([t, n]) =>
-    `<button class="chip ${t === tab ? "on" : ""}" data-admtab="${t}">${n} ${count(t)}</button>`).join("");
+  const tabs = [["reports", "Жалобы"], ["hidden", "Скрытые"], ["all", "Все"], ["sources", "Источники"]].map(([t, n]) =>
+    `<button class="chip ${t === tab ? "on" : ""}" data-admtab="${t}">${n}${t === "sources" ? "" : ` ${count(t)}`}</button>`).join("");
   $app.innerHTML = `<div class="chips">${tabs}</div>
     <input type="url" id="admq" placeholder="Поиск по имени" value="${esc(state.admQuery ?? "")}" style="margin-bottom:14px">
     <div id="admlist"></div>`;
@@ -612,6 +614,44 @@ function drawAdmin() {
       </div></div>`).join("") || `<div class="empty">${tab === "reports" ? "Жалоб нет." : tab === "hidden" ? "Скрытых нет." : "Никого не найдено."}</div>`;
   };
   drawList();
+}
+
+async function renderSources() {
+  $app.innerHTML = `<div class="chips"><button class="chip" data-admtab="all">Все авторы</button><button class="chip on" data-admtab="sources">Источники</button></div>
+    <div class="card adm">
+      <label for="source-code">Название источника</label>
+      <input type="url" id="source-code" placeholder="podruga" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <p class="rating">Латинские буквы, цифры и нижнее подчёркивание, до 60 символов. Для каждого размещения используйте новое название.</p>
+      <button class="btn" id="source-create">Создать ссылку</button>
+      <div id="source-result"></div>
+    </div>
+    <p class="rating">Статистика за всё время. Считаются новые авторы, открывшие приложение. Первый источник сохраняется. Клики без открытия приложения не учитываются. Старые авторы показаны без источника.</p>
+    <div id="source-stats">Загрузка…</div>`;
+  document.getElementById("source-create").onclick = () => {
+    const code = document.getElementById("source-code").value.trim().toLowerCase();
+    if (!/^[a-z0-9_]{1,60}$/.test(code)) {
+      tg.showAlert("Введите до 60 латинских букв, цифр или нижних подчёркиваний."); return;
+    }
+    const link = `https://t.me/${BOT}?startapp=src_${code}`;
+    document.getElementById("source-result").innerHTML = `<label for="source-link">Скопируйте и отправьте для размещения</label><input type="url" id="source-link" readonly value="${esc(link)}"><p class="rating">Источник появится в отчёте после первого нового автора.</p>`;
+    document.getElementById("source-link").onclick = (e) => e.target.select();
+  };
+  try {
+    const r = await api("admin_sources");
+    if (state.tab !== "admin" || state.admTab !== "sources") return;
+    const target = document.getElementById("source-stats");
+    if (r.error) { target.textContent = "Не удалось загрузить статистику. Откройте раздел ещё раз."; return; }
+    target.innerHTML = r.sources.map((s) => `<div class="card item adm">
+      <b>${esc(s.source_code ?? "Без источника")}</b>
+      <div class="meta">Новых авторов: ${Number(s.joined)}</div>
+      <div class="meta">Добавили площадку или рилс: ${Number(s.with_content)}</div>
+      <div class="meta">Отправили подтверждение: ${Number(s.sent_support)}</div>
+      <div class="meta">Получили ответ на своё задание: ${Number(s.received_reply)}</div>
+      </div>`).join("") || `<div class="empty">Пока нет данных.</div>`;
+  } catch {
+    const target = document.getElementById("source-stats");
+    if (target) target.textContent = "Не удалось загрузить статистику. Откройте раздел ещё раз.";
+  }
 }
 
 function render() {
@@ -656,3 +696,4 @@ function render() {
 </script>
 </body>
 </html>
+

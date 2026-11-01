@@ -132,6 +132,13 @@ async function getUser(id: number) {
   const { data } = await db.from("vz_users").select("*").eq("tg_id", id).maybeSingle();
   return data;
 }
+
+// Метка источника сохраняется только при создании автора.
+function sourceCode(value: unknown): string | null {
+  return typeof value === "string" && /^src_[A-Za-z0-9_]{1,60}$/.test(value)
+    ? value.slice(4).toLowerCase() : null;
+}
+
 async function rating(id: number): Promise<number | null> {
   const { data } = await db.rpc("vz_rating", { uid: id });
   return data;
@@ -346,6 +353,13 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
     return { ok: true };
   },
 
+  async admin_sources(me) {
+    if (!me.is_admin) return { error: "admin" };
+    const { data, error } = await db.rpc("vz_source_stats");
+    if (error) throw error;
+    return { sources: data ?? [] };
+  },
+
   async admin_list(me) {
     if (!me.is_admin) return { error: "admin" };
     const { data: users } = await db.from("vz_users").select("*").order("created_at", { ascending: false });
@@ -413,7 +427,8 @@ async function onBotUpdate(update: any) {
   const msg = update.message;
   if (!msg || msg.chat?.type !== "private") return;
   const ref = /^\/start ref_(\d+)$/.exec(msg.text ?? "")?.[1];
-  const url = ref ? `${WEBAPP_URL}?ref=${ref}` : WEBAPP_URL;
+  const source = sourceCode(/^\/start (\S+)$/.exec(msg.text ?? "")?.[1]);
+  const url = ref ? `${WEBAPP_URL}?ref=${ref}` : source ? `${WEBAPP_URL}?source=src_${source}` : WEBAPP_URL;
   const u = (await getUser(msg.chat.id)) ?? { lang: langOf(msg.from?.language_code) };
   await tg("sendMessage", {
     chat_id: msg.chat.id,
@@ -705,7 +720,12 @@ Deno.serve(async (req) => {
   if (!me) {
     const refRaw = (auth.start ?? b.ref ?? "").toString().replace(/^ref_/, "");
     const ref = /^\d+$/.test(refRaw) && Number(refRaw) !== auth.user.id ? Number(refRaw) : null;
-    await db.from("vz_users").insert({ tg_id: auth.user.id, invited_by: ref });
+    const source = sourceCode(auth.start ?? b.source);
+    // При одновременных запросах первый вход выигрывает, источник не перезаписывается.
+    const { error } = await db.from("vz_users").upsert({
+      tg_id: auth.user.id, invited_by: ref, source_code: source,
+    }, { onConflict: "tg_id", ignoreDuplicates: true });
+    if (error) return json({ error: "server" }, 500);
   }
   // Имя, фото и @username берём из Telegram при каждом входе, чтобы они были свежими.
   // Язык: выбор в приложении, иначе уже сохранённый, иначе по языку Telegram.
@@ -723,3 +743,4 @@ Deno.serve(async (req) => {
     return json({ error: "server" }, 500);
   }
 });
+
