@@ -272,50 +272,122 @@ async function refreshMe() {
 const skipField = (c) => (c.field === "reel" ? `reel:${c.reel_id}` : c.field);
 
 function goTab(tab) {
+  state.upload = null;
   state.tab = tab;
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   render();
 }
 
 // ---------- Лента ----------
+function beginExchange(c) {
+  state.pendingCard = { field: c.field, tg_id: c.tg_id, reel_id: c.reel_id, user_id: state.me.user.tg_id };
+  try { sessionStorage.setItem("vz_pending_card", JSON.stringify(state.pendingCard)); } catch {}
+  goTab("profile");
+}
+
+function clearPendingExchange() {
+  state.pendingCard = null;
+  try { sessionStorage.removeItem("vz_pending_card"); } catch {}
+}
+
 async function renderFeed() {
-  // Рилсы первыми: лента начинает круг с рилсов, потом площадки.
-  const mine = (state.reels?.length ? ["reel"] : []).concat(Object.keys(FIELDS).filter((f) => state.me.user[f]));
-  if (!mine.length) {
-    $app.innerHTML = `<div class="empty">${t("Лента откроется, когда вы добавите свой рилс или ссылку на площадку. Начните с рилса: так быстрее всего получить первые поддержки.",
-      "Your feed opens once you add your reel or a platform link. Start with a reel: it's the fastest way to get your first support.")}
-      <div class="row"><button class="btn" data-tab-go="profile">🎬 ${t("Добавить рилс", "Add my reel")}</button></div></div>`;
-    return;
+  const requestId = state.feedRequest = (state.feedRequest ?? 0) + 1;
+  state.upload = null;
+  state.card = null;
+  $app.innerHTML = `<div class="empty">${t("Загрузка заданий…", "Loading tasks…")}</div>`;
+  const current = () => state.tab === "feed" && state.feedRequest === requestId;
+  try {
+    const result = await api("feed_options");
+    if (!current()) return;
+    if (result.error) throw new Error(result.error);
+    const cards = result.cards ?? [];
+    const ready = cards.filter((c) => c.can_exchange);
+    let notice = "";
+    let card = null;
+    const resume = state.resumeCard;
+    if (resume) {
+      const r = await api("feed", { field: resume.field, to_id: resume.tg_id, reel_id: resume.reel_id });
+      if (!current()) return;
+      if (r.error) throw new Error(r.error);
+      card = r.card;
+      state.resumeCard = null;
+      state.field = resume.field;
+      if (!card) notice = t("Выбранное задание уже недоступно. Показываем другие доступные задания.", "The selected task is no longer available. Here are other available tasks.");
+    }
+    if (!card) {
+      let pool = state.field ? cards.filter((c) => c.field === state.field) : ready.length ? ready : cards;
+      if (!pool.length && cards.length) {
+        notice ||= t("На выбранной площадке новых заданий нет. Можно выбрать другую площадку ниже.", "No new tasks on this platform. You can choose another platform below.");
+        pool = ready.length ? ready : cards;
+      }
+      card = pool[(state.rr ?? 0) % Math.max(1, pool.length)] ?? null;
+      state.rr = (state.rr ?? 0) + 1;
+    }
+    const filters = [["all", t("Все", "All")], ...Object.entries(INFO).map(([f, d]) => [f, d.name])];
+    $app.innerHTML = (hasAny() ? progressHtml() : `<p class="rating">${t("Посмотрите задания авторов. Для обмена добавьте свою ссылку на ту же площадку.", "Browse creators' tasks. Add your own link on the same platform to exchange support.")}</p>`)
+      + `<div class="chips">${filters.map(([f, name]) => `<button class="chip ${(state.field ?? "all") === f ? "on" : ""}" data-field="${f}">${esc(name)}</button>`).join("")}</div>`
+      + (notice ? `<p class="rating">${esc(notice)}</p>` : "")
+      + `<div id="slot"></div>`;
+    const slot = document.getElementById("slot");
+    if (!card) {
+      slot.className = "empty";
+      slot.innerHTML = `${t("Сейчас доступных заданий нет. Загляните позже или добавьте свою публикацию в профиле.", "No tasks are available right now. Check back later or add your own publication in your profile.")}<div class="row"><button class="btn" data-tab-go="profile">${t("Открыть профиль", "Open profile")}</button></div>`;
+      return;
+    }
+    state.card = card;
+    slot.className = "card";
+    slot.innerHTML = `<div class="chip on" style="display:inline-block;margin-bottom:12px">${INFO[card.field].name}</div>`
+      + (!card.can_exchange ? `<p class="rating">${t("Просмотр задания. Сначала добавьте свою ссылку для ответной поддержки.", "Task preview. First add your own link so the creator can support you back.")}</p>` : "")
+      + cardHtml(card)
+      + `<div class="row"><button class="btn ghost" data-act="skip">${t("Дальше", "Skip")}</button>`
+      + (card.can_exchange ? `<button class="btn" data-act="shot">📎 ${t("Прикрепить скрин", "Attach screenshot")}</button>` : `<button class="btn" data-act="begin-exchange">${card.field === "reel" ? t("Добавить свой рилс для обмена", "Add my reel to exchange") : t("Добавить свою ссылку для обмена", "Add my link to exchange")}</button>`)
+      + `</div>`
+      + (card.can_exchange ? `<div class="paste">${t("Сделайте задание по ссылке, затем вернитесь и прикрепите скрин.", "Complete the linked task, then return and attach a screenshot.")}</div><div class="row"><button class="btn ghost" data-act="chat">${t("Уже обменялись в чате", "Already swapped in a chat")}</button></div>` : "")
+      + `<button class="report" data-act="report">${t("Пожаловаться", "Report")}</button>`;
+    if (card.can_exchange) state.upload = { field: card.field, to_id: card.tg_id, reply: false, reel_id: card.reel_id };
+  } catch {
+    if (!current()) return;
+    $app.innerHTML = `<div class="empty">${t("Не удалось загрузить задания.", "Couldn't load tasks.")}<div class="row"><button class="btn" data-tab-go="feed">${t("Повторить", "Retry")}</button></div></div>`;
   }
-  $app.innerHTML = progressHtml() + `<div id="slot" class="empty">${t("Загрузка…", "Loading…")}</div>`;
-  // Одна общая лента вперемешку: по кругу берём следующую карточку из каждого заполненного поля.
-  let card = null;
-  for (let i = 0; i < mine.length && !card; i++) {
-    const f = mine[(state.rr ?? 0) % mine.length];
-    state.rr = (state.rr ?? 0) + 1;
-    card = (await api("feed", { field: f })).card;
-  }
-  state.card = card;
-  const slot = document.getElementById("slot");
-  if (!card) { slot.textContent = t("Новых карточек пока нет. Загляните позже.", "No new cards yet. Check back later."); return; }
-  slot.className = "card";
-  slot.innerHTML = `<div class="chip on" style="display:inline-block;margin-bottom:12px">${INFO[card.field].name}</div>` + cardHtml(card) + `
-    <div class="row">
-      <button class="btn ghost" data-act="skip">${t("Дальше", "Skip")}</button>
-      <button class="btn" data-act="shot">📎 ${t("Прикрепить скрин", "Attach screenshot")}</button>
-    </div>
-    <div class="paste">${t("С компьютера: сделайте скрин и нажмите Ctrl+V (Cmd+V) прямо здесь", "On a computer: take a screenshot and press Ctrl+V (Cmd+V) right here")}</div>
-    <div class="row"><button class="btn ghost" data-act="chat">${t("Уже обменялись в чате", "Already swapped in a chat")}</button></div>
-    <button class="report" data-act="report">${t("Пожаловаться", "Report")}</button>`;
-  state.upload = { field: card.field, to_id: card.tg_id, reply: false, reel_id: card.reel_id };
-  // Обучение на живой карточке: пока человек не сделал ни одного обмена.
-  if (!state.me.stats?.given) {
-    const link = slot.querySelector(".link");
-    link.classList.add("pulse");
-    link.insertAdjacentHTML("beforebegin", `<div class="tip">${t("1. Нажмите на ссылку и сделайте задание", "1. Tap the link and complete the task")}</div>`);
-    slot.querySelector('[data-act="shot"]').closest(".row")
-      .insertAdjacentHTML("beforebegin", `<div class="tip">${t("2. Вернитесь сюда и прикрепите скрин", "2. Come back here and attach a screenshot")}</div>`);
-  }
+}
+
+function renderExchangeSetup() {
+  const selected = state.pendingCard;
+  const field = selected.field;
+  const info = INFO[field];
+  const reel = field === "reel";
+  $app.innerHTML = `<h2>${t("Добавьте свою ссылку для обмена", "Add your own link to exchange")}</h2>
+    <p>${t("Вы выбрали задание на площадке", "You selected a task on")} ${esc(info.name)}. ${t("Автор сможет поддержать вас на этой же площадке.", "The creator can support you back on the same platform.")}</p>
+    <form id="exchange-setup"><label for="exchange-url">${esc(info.name)}</label>
+    <input type="url" id="exchange-url" required placeholder="${esc(reel ? "https://www.instagram.com/reel/..." : info.hint)}" value="${esc(reel ? "" : state.me.user[field] ?? "")}">
+    ${reel ? `<p class="safe">${t("Ссылка на конкретное видео: Instagram, TikTok, YouTube Shorts или ВК Клипы. В ленте 48 часов.", "A specific Instagram, TikTok, YouTube Shorts or VK Clips video. Visible in the feed for 48 hours.")}</p>` : ""}
+    <div class="row"><button type="submit" class="btn" id="exchange-save">${t("Сохранить и вернуться к заданию", "Save and return to the task")}</button></div></form>
+    <div class="row"><button class="btn ghost" data-act="cancel-exchange">${t("Вернуться в ленту", "Back to the feed")}</button></div>`;
+  document.getElementById("exchange-setup").onsubmit = async (e) => {
+    e.preventDefault();
+    const value = document.getElementById("exchange-url").value.trim();
+    if (!(reel ? REEL : PATTERN[field]).test(value)) {
+      tg.showAlert(t("Проверьте ссылку: нужна ваша публикация или страница на выбранной площадке.", "Check the link: use your publication or page on the selected platform.")); return;
+    }
+    const save = document.getElementById("exchange-save");
+    if (save.disabled) return;
+    save.disabled = true;
+    try {
+      const data = Object.fromEntries(Object.keys(FIELDS).map((f) => [f, state.me.user[f] ?? ""]));
+      data[field] = value;
+      const r = reel ? await api("reel_add", { url: value }) : await api("save", data);
+      if (r.error) throw new Error(r.error);
+      if (reel) state.reels = r.reels ?? []; else Object.assign(state.me.user, data);
+      if (state.pendingCard !== selected || state.tab !== "profile") return;
+      state.resumeCard = selected;
+      clearPendingExchange();
+      tg.HapticFeedback?.notificationOccurred("success");
+      goTab("feed");
+    } catch {
+      tg.showAlert(t("Не получилось сохранить ссылку. Попробуйте ещё раз.", "Couldn't save the link. Please try again."));
+    } finally { save.disabled = false; }
+  };
+  document.getElementById("exchange-url").focus();
 }
 
 // ---------- Входящие ----------
@@ -368,6 +440,7 @@ async function renderInbox() {
 // ---------- Профиль ----------
 // Рилсы первыми: блок рилса наверху, площадки ниже и по желанию.
 function renderProfile() {
+  if (state.pendingCard) { renderExchangeSetup(); return; }
   const u = state.me.user;
   const reels = state.reels ?? [];
   const inputs = Object.entries(FIELDS).map(([f, d]) =>
@@ -478,9 +551,13 @@ document.addEventListener("click", async (e) => {
       body: JSON.stringify({ initData: tg.initData, lang: b.dataset.lang, action: "me" }) });
     location.reload();
   } else if (b.dataset.field) {
-    state.field = b.dataset.field; renderFeed();
+    state.field = b.dataset.field === "all" ? null : b.dataset.field; state.rr = 0; renderFeed();
   } else if (b.dataset.open) {
     b.dataset.open.startsWith("https://t.me/") ? tg.openTelegramLink(b.dataset.open) : tg.openLink(b.dataset.open);
+  } else if (b.dataset.act === "begin-exchange") {
+    if (state.card && !state.card.can_exchange) beginExchange(state.card);
+  } else if (b.dataset.act === "cancel-exchange") {
+    clearPendingExchange(); goTab("feed");
   } else if (b.dataset.act === "skip") {
     await api("skip", { field: skipField(state.card), to_id: state.card.tg_id }); renderFeed();
   } else if (b.dataset.act === "report") {
@@ -544,11 +621,11 @@ document.addEventListener("click", async (e) => {
 
 // Текст правил. Блок про рилсы первым: это главный обмен.
 const RULES_RU = `<b>Рилсы</b>
-<p>Вставьте в профиле ссылку на конкретное видео: Instagram, TikTok, YouTube Shorts или ВК Клипы. Рилс живёт в ленте 48 часов, одновременно можно два. Рилсы других авторов видны, пока у вас есть свой живой рилс. Поддержка рилса: комментарий, сохранение, пересылка и скрин. В ответ автор поддерживает ваш рилс.</p>
+<p>Вставьте в профиле ссылку на конкретное видео: Instagram, TikTok, YouTube Shorts или ВК Клипы. Рилс живёт в ленте 48 часов, одновременно можно два. Задания других авторов можно просматривать сразу. Чтобы участвовать в обмене рилсами, добавьте свой активный рилс. Поддержка рилса: комментарий, сохранение, пересылка и скрин. В ответ автор поддерживает ваш рилс.</p>
 <b>Другие площадки</b>
 <p>В профиле 7 полей, все по желанию: книга и профиль автора на ЛитРес, группа в Телеграме, ВК, Бусти, TikTok, Instagram. Принимаются только ссылки с litres.ru, t.me, vk.com, vk.ru, boosty.to, tiktok.com и instagram.com, поэтому в карточках нет скама.</p>
 <b>Обмен по полям</b>
-<p>Книга на книгу, профиль на профиль, группа на группу. В ленте вы видите авторов, у которых заполнено то же поле.</p>
+<p>Книга на книгу, профиль на профиль, группа на группу. В ленте можно просматривать задания на всех площадках. Для обмена добавьте свою ссылку на ту же площадку. Подходящие задания показываются первыми.</p>
 <b>Как обменяться</b>
 <p>Откройте ссылку в карточке, сделайте задание, вернитесь и прикрепите скрин. С компьютера его можно вставить через Ctrl+V. Автор получит ваш скрин и карточку, а в ответ пришлёт свой скрин.</p>
 <b>Скрин обязателен</b>
@@ -564,11 +641,11 @@ const RULES_RU = `<b>Рилсы</b>
 <b>Жалобы</b>
 <p>Пожаловаться можно на ссылку со скамом, фейковые скрины или другое нарушение. После 3 жалоб от разных людей карточка скрывается до решения администратора. За нарушения он может заблокировать доступ.</p>`;
 const RULES_EN = `<b>Reels</b>
-<p>Paste a link to a specific video in your profile: Instagram, TikTok, YouTube Shorts or VK Clips. A reel stays in the feed for 48 hours, and you can have two at a time. You see other creators' reels while you have a live reel of your own. Supporting a reel means a comment, a save, a share and a screenshot. In return, the creator supports your reel.</p>
+<p>Paste a link to a specific video in your profile: Instagram, TikTok, YouTube Shorts or VK Clips. A reel stays in the feed for 48 hours, and you can have two at a time. You can browse tasks immediately. Add a live reel of your own to exchange reel support. Supporting a reel means a comment, a save, a share and a screenshot. In return, the creator supports your reel.</p>
 <b>Other platforms</b>
 <p>Your profile has 7 optional fields: LitRes book and author profile, Telegram group, VK, Boosty, TikTok, Instagram. Only links from litres.ru, t.me, vk.com, vk.ru, boosty.to, tiktok.com and instagram.com are accepted, so cards stay free of scams.</p>
 <b>Swaps by field</b>
-<p>Book for book, profile for profile, group for group. In the feed you see creators who filled in the same field.</p>
+<p>Book for book, profile for profile, group for group. Browse tasks on all platforms. Add your own link on the same platform to exchange support. Tasks you can take are shown first.</p>
 <b>How to swap</b>
 <p>Open the link on the card, complete the task, come back and attach a screenshot. On a computer you can paste it with Ctrl+V. The creator gets your screenshot and your card, and sends their screenshot back.</p>
 <b>Screenshot required</b>
@@ -705,7 +782,15 @@ function render() {
   // Кнопка из сообщения бота может открыть нужную вкладку: ?tab=profile.
   const startTab = new URLSearchParams(location.search).get("tab");
   if (["feed", "inbox", "profile", "rules"].includes(startTab)) state.tab = startTab;
-  if (!hasAny() && startTab !== "inbox") state.tab = "profile";
+  try {
+    const pending = JSON.parse(sessionStorage.getItem("vz_pending_card") ?? "null");
+    if (pending && pending.user_id === state.me.user.tg_id && INFO[pending.field]
+      && Number.isSafeInteger(pending.tg_id) && pending.tg_id > 0
+      && (pending.field !== "reel" || Number.isSafeInteger(pending.reel_id))) {
+      state.pendingCard = pending;
+      if (!startTab) state.tab = "profile";
+    }
+  } catch {}
   goTab(state.tab);
 })();
 </script>

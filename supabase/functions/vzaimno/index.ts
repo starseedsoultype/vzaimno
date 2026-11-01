@@ -169,6 +169,30 @@ async function activeReels(uid: number) {
   return data ?? [];
 }
 
+// Просмотр доступен до заполнения профиля, участие требует своей площадки.
+async function feedCard(me: any, field: Field, target?: { tg_id: number; reel_id?: number }) {
+  if (field !== "reel" && !FIELDS.includes(field as any)) return null;
+  const lim = target ? 2147483647 : 1;
+  let query = field === "reel"
+    ? db.rpc("vz_reel_feed", { me: me.tg_id, lim })
+    : db.rpc("vz_feed", { me: me.tg_id, f: field, lim });
+  if (target) {
+    query = query.eq(field === "reel" ? "owner" : "tg_id", target.tg_id);
+    if (field === "reel") query = query.eq("reel_id", target.reel_id ?? 0);
+  }
+  const { data, error } = await query.limit(1);
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) return null;
+  const owner = field === "reel" ? await getUser(row.owner) : row;
+  if (!owner) return null;
+  const canExchange = field === "reel" ? (await activeReels(me.tg_id)).length > 0 : !!me[field];
+  return {
+    ...await card(owner, field, field === "reel" ? { id: row.reel_id, url: row.url } : null),
+    can_exchange: canExchange,
+  };
+}
+
 const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
   async me(me) {
     const { data: unanswered } = await db.rpc("vz_unanswered", { uid: me.tg_id });
@@ -243,17 +267,15 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
   },
 
   async feed(me, b) {
-    if (b.field === "reel") {
-      if (!(await activeReels(me.tg_id)).length) return { card: null };
-      const { data } = await db.rpc("vz_reel_feed", { me: me.tg_id, lim: 1 });
-      const r = data?.[0];
-      const owner = r ? await getUser(r.owner) : null;
-      return { card: owner ? await card(owner, "reel", { id: r.reel_id, url: r.url }) : null };
-    }
     const field = b.field as Field;
-    if (!FIELDS.includes(field as any) || !me[field]) return { card: null };
-    const { data } = await db.rpc("vz_feed", { me: me.tg_id, f: field, lim: 1 });
-    return { card: data?.[0] ? await card(data[0], field) : null };
+    const target = Number.isSafeInteger(b.to_id) && b.to_id > 0
+      ? { tg_id: b.to_id, reel_id: Number(b.reel_id) } : undefined;
+    return { card: await feedCard(me, field, target) };
+  },
+
+  async feed_options(me) {
+    const cards = await Promise.all((["reel", ...FIELDS] as Field[]).map((field) => feedCard(me, field)));
+    return { cards: cards.filter(Boolean) };
   },
 
   async skip(me, b) {
