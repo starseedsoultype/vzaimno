@@ -130,11 +130,10 @@ const BOT = "vzaimnosub_bot";
 const tg = window.Telegram.WebApp;
 tg.ready(); tg.expand();
 
-// Язык: выбор человека (localStorage), иначе язык Telegram. Русский для ru/uk/be/kk, всем остальным английский.
-const RU_CODES = ["ru", "uk", "be", "kk"];
+// Язык: выбор человека (localStorage), иначе русский. Английский включается переключателем в профиле.
 const LANG = (() => {
   try { const s = localStorage.getItem("vz_lang"); if (s === "ru" || s === "en") return s; } catch {}
-  return RU_CODES.includes((tg.initDataUnsafe?.user?.language_code ?? "").slice(0, 2)) ? "ru" : "en";
+  return "ru";
 })();
 const t = (ru, en) => (LANG === "en" ? en : ru);
 document.documentElement.lang = LANG;

@@ -29,8 +29,8 @@ Opens right inside Telegram, nothing to install 🎬`;
 const ABOUT_EN = "Reel swap for creators. Support a reel, get yours supported. Every swap confirmed with a screenshot.";
 
 // Язык человека: сохранённый (переключатель в приложении) или из Telegram. Русский для ru/uk/be/kk.
-const RU_CODES = ["ru", "uk", "be", "kk"];
-const langOf = (code?: string | null) => (RU_CODES.includes(String(code ?? "").slice(0, 2)) ? "ru" : "en");
+// Язык по умолчанию русский для всех; английский только по выбору человека (переключатель в профиле).
+const langOf = (_code?: string | null) => "ru";
 const isEn = (u: any) => (u?.lang ?? "ru") === "en";
 const tr = (u: any, ru: string, en: string) => (isEn(u) ? en : ru);
 
