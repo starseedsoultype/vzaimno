@@ -455,6 +455,16 @@ const actions: Record<string, (me: any, b: any) => Promise<unknown>> = {
 async function onBotUpdate(update: any) {
   const msg = update.message;
   if (!msg || msg.chat?.type !== "private") return;
+  // Аудио от админа: запоминаем file_id, чтобы потом разослать его всем (?broadcast_media=all&audio=last).
+  const aud = msg.audio ? ["audio", msg.audio] : msg.voice ? ["voice", msg.voice]
+    : String(msg.document?.mime_type ?? "").startsWith("audio/") ? ["document", msg.document] : null;
+  if (aud) {
+    if ((await getUser(msg.chat.id))?.is_admin) {
+      await db.from("vz_runs").upsert({ name: `audio:${aud[0]}:${(aud[1] as any).file_id}`, at: new Date().toISOString() });
+      await tg("sendMessage", { chat_id: msg.chat.id, text: "Аудио принято. Для рассылки берётся последнее присланное." });
+    }
+    return;
+  }
   const ref = /^\/start ref_(\d+)$/.exec(msg.text ?? "")?.[1];
   const source = sourceCode(/^\/start (\S+)$/.exec(msg.text ?? "")?.[1]);
   const url = ref ? `${WEBAPP_URL}?ref=${ref}` : source ? `${WEBAPP_URL}?source=src_${source}` : WEBAPP_URL;
@@ -669,6 +679,14 @@ Deno.serve(async (req) => {
     }
     const test = url.searchParams.get("broadcast_media") === "test";
     const job = url.searchParams.get("job");
+    // audio=last: вместо видео шлём последнее аудио, присланное админом боту (проверяем до защиты от повтора).
+    let audio: { kind: string; id: string } | null = null;
+    if (url.searchParams.get("audio") === "last") {
+      const { data: last } = await db.from("vz_runs").select("name").like("name", "audio:%").order("at", { ascending: false }).limit(1);
+      const m = /^audio:(audio|voice|document):(.+)$/.exec(last?.[0]?.name ?? "");
+      if (!m) return json({ error: "no_audio" });
+      audio = { kind: m[1] === "voice" ? "voice" : "audio", id: m[2] };
+    }
     if (!test) {
       if (!job) return json({ error: "job" });
       const { data: ok } = await db.rpc("vz_claim_run", { job });
@@ -683,7 +701,7 @@ Deno.serve(async (req) => {
     let q = db.from("vz_users").select("tg_id").eq("banned", false);
     if (test) q = q.eq("is_admin", true);
     const { data: users } = await q;
-    let fileId: string | null = isJson ? String(data.animation) : null, sent = 0;
+    let fileId: string | null = isJson && data.animation ? String(data.animation) : null, sent = 0;
     for (const u of users ?? []) {
       // Первый раз грузим файл, дальше шлём по file_id.
       const body = new FormData();
@@ -691,8 +709,9 @@ Deno.serve(async (req) => {
       body.append("caption", caption);
       body.append("parse_mode", "HTML");
       body.append("reply_markup", markup);
-      body.append("animation", fileId ?? (form!.get("video") as File));
-      const r = await (await fetch(`https://api.telegram.org/bot${TOKEN}/sendAnimation`, { method: "POST", body })).json();
+      const kind = audio?.kind ?? "animation";
+      body.append(kind, audio?.id ?? fileId ?? (form!.get("video") as File));
+      const r = await (await fetch(`https://api.telegram.org/bot${TOKEN}/send${kind[0].toUpperCase()}${kind.slice(1)}`, { method: "POST", body })).json();
       if (r.ok) { sent++; fileId ??= r.result.animation?.file_id ?? r.result.document?.file_id ?? null; }
     }
     return json({ sent, of: (users ?? []).length, file_id: fileId });
